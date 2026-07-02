@@ -1,0 +1,25 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+RUN corepack enable
+COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY packages ./packages
+COPY apps ./apps
+RUN corepack pnpm install --frozen-lockfile=false
+
+FROM base AS build
+ARG NEXT_PUBLIC_API_BASE_URL=/api
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+RUN corepack pnpm --filter @damnmail/frontend build
+
+FROM node:20-alpine AS runtime
+WORKDIR /app
+RUN corepack enable
+RUN npm install -g serve
+ENV NODE_ENV=production
+COPY --from=base /app/package.json ./package.json
+COPY --from=base /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=base /app/node_modules ./node_modules
+COPY --from=build /app/apps/frontend ./apps/frontend
+COPY --from=build /app/packages/shared ./packages/shared
+EXPOSE 3000
+CMD ["serve", "-s", "apps/frontend/out", "-l", "3000"]

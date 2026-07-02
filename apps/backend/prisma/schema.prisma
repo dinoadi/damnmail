@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Domain {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  inboxes   Inbox[]
+}
+
+model Inbox {
+  id             String    @id @default(cuid())
+  username       String
+  address        String    @unique
+  expiresAt      DateTime
+  telegramChatId String?
+  createdAt      DateTime  @default(now())
+  domainId       String
+  domain         Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  emails         Email[]
+}
+
+model Email {
+  id          String       @id @default(cuid())
+  inboxId     String
+  inbox       Inbox        @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+  envelopeFrom String
+  from        String
+  to          String
+  subject     String
+  html        String?
+  text        String?
+  snippet     String
+  receivedAt  DateTime     @default(now())
+  attachments Attachment[]
+}
+
+model Attachment {
+  id          String   @id @default(cuid())
+  emailId     String
+  email       Email    @relation(fields: [emailId], references: [id], onDelete: Cascade)
+  filename    String
+  contentType String
+  size        Int
+  storagePath String
+}

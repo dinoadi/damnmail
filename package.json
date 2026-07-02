@@ -1,0 +1,17 @@
+{
+  "name": "damnmail",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "dev": "concurrently \"corepack pnpm --filter @damnmail/backend dev\" \"corepack pnpm --filter @damnmail/frontend dev\"",
+    "build": "corepack pnpm -r build",
+    "lint": "corepack pnpm -r lint",
+    "typecheck": "corepack pnpm -r typecheck",
+    "test": "corepack pnpm --filter @damnmail/backend test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "typescript": "^5.6.3"
+  }
+}
