@@ -111,19 +111,9 @@ export default function Page() {
       })
   }, [isUnlocked])
 
-  if (!isUnlocked) {
-    return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
-  }
-
-
   useEffect(() => {
-    if (!activeInbox) {
-      return
-    }
-
+    if (!isUnlocked || !activeInbox) return
     const path = `/api/inboxes/${activeInbox.address}/messages`
-
-    // Initial fetch
     fetchJson<ApiResponse<EmailViewModel[]>>(path)
       .then((response) => {
         if (response.success && response.data) {
@@ -134,8 +124,6 @@ export default function Page() {
       .catch(() => {
         setErrorMessage('Gagal memuat inbox.')
       })
-
-    // Poll for new messages every 4 seconds
     const stopPolling = startPolling<ApiResponse<EmailViewModel[]>>(
       path,
       (response) => {
@@ -148,13 +136,14 @@ export default function Page() {
       },
       4000
     )
-
-    return () => {
-      stopPolling()
-    }
-  }, [activeInbox])
+    return () => { stopPolling() }
+  }, [isUnlocked, activeInbox])
 
   const activeAddressLabel = useMemo(() => activeInbox?.address ?? 'No active inbox', [activeInbox])
+
+  if (!isUnlocked) {
+    return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
+  }
 
   async function createInbox(createRandom: boolean): Promise<void> {
     if (!selectedDomain) {
