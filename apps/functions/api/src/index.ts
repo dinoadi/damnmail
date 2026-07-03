@@ -14,13 +14,21 @@ export default async ({ req, res, log, error }: any) => {
     const client = new Client()
       .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.APPWRITE_ENDPOINT || '')
       .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.APPWRITE_PROJECT_ID || '')
-      .setKey(req.headers['x-appwrite-key'] || '');
+      .setKey(req.headers['x-appwrite-key'] || process.env.APPWRITE_FUNCTION_API_KEY || '');
     const databases = new Databases(client);
     const storage = new Storage(client);
 
-    const { path, method } = req;
+    let { path, method } = req;
     let body: Record<string, any> = {};
-    try { body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.bodyJson || {}); } catch (e) {}
+    try { body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.bodyJson || JSON.parse(req.bodyText || '{}')); } catch (e) {}
+    // Support execution API mode: when called via API execution (path='/', method='POST'),
+    // read routing info from the parsed body
+    if (path === '/' && method === 'POST' && body.path) {
+      path = body.path;
+      method = body.method?.toUpperCase?.() || 'GET';
+      const innerBody = typeof body.body === 'string' && body.body.length > 0 ? JSON.parse(body.body) : (body.body || {});
+      body = innerBody;
+    }
     const headers = req.headers || {};
     const query = req.query || {};
 
@@ -168,7 +176,9 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
       Query.equal('address', addressLookup),
       Query.limit(1),
     ]);
+    if (inboxes.documents.length === 0) {
       return res.json({ success: true, data: [] });
+    }
     const result = await databases.listDocuments(DB_ID, COLL_EMAILS, [
       Query.equal('inboxAddress', addressLookup),
       Query.orderDesc('$createdAt'),
@@ -176,6 +186,23 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
     ]);
 
     const messages = result.documents.map((d: any) => {
+      const endpoint = process.env.APPWRITE_ENDPOINT || 'https://sgp.cloud.appwrite.io/v1';
+      const project = process.env.APPWRITE_PROJECT_ID || 'damnmail';
+      let rawAttachments: any[] = [];
+      try {
+        rawAttachments = d.attachments ? JSON.parse(d.attachments) : [];
+      } catch {}
+
+      const attachments = rawAttachments.map((att: any, idx: number) => ({
+        id: att.fileId || `att-${idx}`,
+        filename: att.filename || 'unnamed',
+        contentType: att.contentType || 'application/octet-stream',
+        size: att.size || 0,
+        downloadUrl: att.fileId
+          ? `${endpoint}/storage/buckets/${BUCKET_ATTACHMENTS}/files/${att.fileId}/view?project=${project}`
+          : '',
+      }));
+
       const msg: any = {
         id: d.$id,
         inboxAddress: d.inboxAddress,
@@ -185,19 +212,12 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
         snippet: d.snippet,
         text: d.text,
         html: d.html,
+        receivedAt: d.$createdAt,
         createdAt: d.$createdAt,
+        attachments,
       };
-
-      // Parse attachments
-      try {
-        msg.attachments = d.attachments ? JSON.parse(d.attachments) : [];
-      } catch {
-        msg.attachments = [];
-      }
-
       return msg;
     });
-
     return res.json({ success: true, data: messages });
   } catch (err: any) {
     error(`List messages error: ${err.message}`);

@@ -12,23 +12,19 @@ export async function callFunction<T>(method: string, path: string, body?: strin
     payload.body = body
   }
 
-  // We only send the execution payload to the Netlify proxy.
-  // The proxy is responsible for securely passing the API key and forwarding to Appwrite.
-  const fetchOptions = {
+  const response = await fetch(NEXT_PUBLIC_API_BASE_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload)
-  }
-
-  const response = await fetch(NEXT_PUBLIC_API_BASE_URL, fetchOptions)
+  })
 
   if (!response.ok) {
     throw new Error(`API request failed: ${response.status}`)
   }
 
-  const execution = await response.json()
+  const execution = await response.json() as ExecutionResponse<T>
 
   if (execution.status !== 'completed') {
     throw new Error(`Function execution failed: ${execution.status}`)

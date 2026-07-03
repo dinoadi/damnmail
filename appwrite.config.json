@@ -1,3 +1,15 @@
 {
-    "projectId": "damnmail"
+    "projectId": "damnmail",
+    "endpoint": "https://sgp.cloud.appwrite.io/v1",
+    "hosting": {
+        "name": "dashboard",
+        "domain": "readyonbooking.app",
+        "source": "./apps/frontend/out",
+        "functionRoutes": [
+            {
+                "path": "/api/*",
+                "functionId": "api"
+            }
+        ]
+    }
 }

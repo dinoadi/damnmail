@@ -21,13 +21,27 @@ function formatTimeUntilExpiry(expiresAt: string): string {
   return `Expiring in ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
 
-function relativeTime(dateString: string): string {
-  const diffMs = Date.now() - new Date(dateString).getTime()
-  const diffMinutes = Math.max(1, Math.floor(diffMs / 60_000))
+function relativeTime(dateString: string | undefined | null): string {
+  if (!dateString) return 'just now'
+  const date = new Date(dateString)
+  if (isNaN(date.getTime())) return 'just now'
+  const diffMs = Date.now() - date.getTime()
+  if (diffMs < 0) return 'just now'
+  const diffMinutes = Math.floor(diffMs / 60_000)
+  if (diffMinutes < 1) return 'just now'
   if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`
-
   const diffHours = Math.floor(diffMinutes / 60)
-  return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+}
+
+function linkifyUrls(text: string): string {
+  if (!text) return ''
+  return text.replace(
+    /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/g,
+    '<a href="$1" target="_blank" rel="noreferrer" class="text-blue-600 underline hover:text-blue-800">$1</a>'
+  )
 }
 
 const PASSWORD = 'ZHAMBALA99'
@@ -81,6 +95,9 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
 export default function Page() {
   const [isUnlocked, setIsUnlocked] = useState(false)
   const [inboxAddress, setInboxAddress] = useState('')
+  const [domains, setDomains] = useState<{ name: string; isActive: boolean }[]>([])
+  const [selectedDomain, setSelectedDomain] = useState('')
+  const [usernameInput, setUsernameInput] = useState('')
   const [activeAddress, setActiveAddress] = useState('')
   const [messages, setMessages] = useState<EmailViewModel[]>([])
   const [selectedMessage, setSelectedMessage] = useState<EmailViewModel | null>(null)
@@ -130,6 +147,21 @@ export default function Page() {
     return () => { stopPolling() }
   }, [isUnlocked, activeAddress])
 
+  useEffect(() => {
+    if (!isUnlocked) return
+    fetchJson<ApiResponse<{ name: string; isActive: boolean }[]>>('/api/domains')
+      .then((response) => {
+        if (response.success && response.data) {
+          const active = response.data.filter((d: any) => d.isActive)
+          setDomains(active)
+          if (active.length > 0) {
+            setSelectedDomain((prev) => prev || active[0].name)
+          }
+        }
+      })
+      .catch(() => {})
+  }, [isUnlocked])
+
   if (!isUnlocked) {
     return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
   }
@@ -163,6 +195,23 @@ export default function Page() {
     }
   }
 
+
+  function generateRandomUsername(): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    return Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+  }
+
+  function handleGenerate() {
+    const domain = selectedDomain || (domains.length > 0 ? domains[0].name : '')
+    if (!domain) return
+    const username = generateRandomUsername()
+    const address = `${username}@${domain}`
+    setUsernameInput(username)
+    setInboxAddress(address)
+    setErrorMessage('')
+    setSelectedMessage(null)
+    setActiveAddress(address.toLowerCase())
+  }
   return (
     <main className="relative min-h-screen bg-gray-50 text-gray-900 px-4 py-8 md:px-8">
       <div className="mx-auto flex max-w-6xl flex-col gap-8">
@@ -194,21 +243,53 @@ export default function Page() {
               <form onSubmit={handleCheckInbox} className="space-y-3">
                 <div className="grid gap-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-gray-500">Email Address</label>
-                  <input
-                    value={inboxAddress}
-                    onChange={(e) => setInboxAddress(e.target.value)}
-                    placeholder="nama@domain.app"
-                    type="email"
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black"
-                  />
+                  <div className="flex items-stretch">
+                    <input
+                      value={usernameInput}
+                      onChange={(e) => {
+                        setUsernameInput(e.target.value)
+                        if (selectedDomain) {
+                          setInboxAddress(`${e.target.value}@${selectedDomain}`)
+                        }
+                      }}
+                      placeholder="username"
+                      className="w-full min-w-0 rounded-l-lg border border-r-0 border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black"
+                    />
+                    <span className="flex items-center border-y border-gray-300 bg-gray-50 px-2 text-sm text-gray-500 select-none">@</span>
+                    <select
+                      value={selectedDomain}
+                      onChange={(e) => {
+                        const domain = e.target.value
+                        setSelectedDomain(domain)
+                        if (usernameInput) {
+                          setInboxAddress(`${usernameInput}@${domain}`)
+                        }
+                      }}
+                      className="min-w-[120px] rounded-r-lg border border-l-0 border-gray-300 bg-white px-2 py-2 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black"
+                    >
+                      {domains.length === 0 && <option value="">No domains</option>}
+                      {domains.map((d) => (
+                        <option key={d.name} value={d.name}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-50"
-                >
-                  Cek Inbox
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleGenerate}
+                    className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                  >
+                    Generate Random
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isLoading || !usernameInput || !selectedDomain}
+                    className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-50"
+                  >
+                    Cek Inbox
+                  </button>
+                </div>
               </form>
 
               {activeAddress && (
@@ -319,12 +400,59 @@ export default function Page() {
 
                   <div className="p-5 overflow-x-auto flex-1 bg-white">
                     {selectedMessage.html ? (
+                      <iframe
+                        className="w-full h-full border-0 rounded-lg shadow-sm"
+                        srcDoc={selectedMessage.html}
+                        sandbox="allow-same-origin allow-popups allow-forms allow-scripts" // Minimal permissions
+                        title="Email Content"
+                      />
+                    ) : (
+                      <div className="prose prose-sm max-w-none bg-white p-4 rounded-lg shadow-sm border border-gray-200" dangerouslySetInnerHTML={{ __html: selectedMessage.html }} />
+                    ) : (
                       <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: selectedMessage.html }} />
                     ) : (
-                      <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">{selectedMessage.text ?? 'No readable content.'}</pre>
+                      <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: linkifyUrls(selectedMessage.text ?? '') }} />
                     )}
-                  </div>
+
+                    {selectedMessage.attachments && selectedMessage.attachments.length > 0 && (
+                      <div className="mt-8 border-t border-gray-100 pt-6">
+                        <h3 className="text-sm font-semibold text-gray-900 mb-3">Attachments ({selectedMessage.attachments.length})</h3>
+                        <div className="flex flex-wrap gap-3">
+                          {selectedMessage.attachments.map((att) => {
+                            const isImage = att.contentType.startsWith('image/')
+                            return (
+                              <div key={att.id} className="flex flex-col rounded-lg border border-gray-200 bg-gray-50 overflow-hidden max-w-xs">
+                                {isImage && att.downloadUrl && (
+                                  <div className="h-32 bg-gray-100 flex items-center justify-center border-b border-gray-200 overflow-hidden">
+                                    <img src={att.downloadUrl} alt={att.filename} className="max-h-full max-w-full object-contain" />
+                                  </div>
+                                )}
+                                <div className="p-3 flex items-center gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-medium text-gray-900 truncate" title={att.filename}>{att.filename}</p>
+                                    <p className="text-[10px] text-gray-500">{(att.size / 1024).toFixed(1)} KB</p>
+                                  </div>
+                                  {att.downloadUrl ? (
+                                    <a
+                                      href={att.downloadUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="rounded bg-black px-2.5 py-1 text-xs font-semibold text-white hover:bg-gray-800 transition"
+                                    >
+                                      Download
+                                    </a>
+                                  ) : (
+                                    <span className="text-xs text-gray-400">Unavailable</span>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
                 </div>
+              </div>
               ) : (
                 <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 flex-1">
                   Select a message from the inbox to view its contents.

@@ -1,9 +1,12 @@
 import { simpleParser } from 'mailparser';
-import { Client, Databases, ID, Query } from 'node-appwrite';
+import { Client, Databases, Storage, ID, Query } from 'node-appwrite';
+import { InputFile } from 'node-appwrite/file';
 
 const DB_ID = 'damnmail';
 const COLL_INBOXES = 'inboxes';
 const COLL_EMAILS = 'emails';
+
+const BUCKET_ATTACHMENTS = 'attachments';
 
 export default async ({ req, res, log, error }: any) => {
   try {
@@ -80,8 +83,9 @@ export default async ({ req, res, log, error }: any) => {
     const client = new Client()
       .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.APPWRITE_ENDPOINT || '')
       .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.APPWRITE_PROJECT_ID || '')
-      .setKey(req.headers['x-appwrite-key'] || '');
+      .setKey(req.headers['x-appwrite-key'] || process.env.APPWRITE_FUNCTION_API_KEY || '')
     const databases = new Databases(client);
+    const storage = new Storage(client);
 
     let inboxDoc: any;
     try {
@@ -117,15 +121,28 @@ export default async ({ req, res, log, error }: any) => {
     }
 
     // Process attachments
+    // Process attachments
     const attachments: any[] = [];
     if (parsed.attachments && parsed.attachments.length > 0) {
       for (const att of parsed.attachments) {
-        attachments.push({
-          filename: att.filename || 'unnamed',
-          contentType: att.contentType || 'application/octet-stream',
-          size: att.size || 0,
-          contentId: att.contentId || undefined,
-        });
+        try {
+          const filename = att.filename || 'unnamed';
+          let fileId = undefined;
+          if (att.content) {
+            const file = InputFile.fromBuffer(att.content, filename);
+            const uploaded = await storage.createFile(BUCKET_ATTACHMENTS, ID.unique(), file);
+            fileId = uploaded.$id;
+          }
+          attachments.push({
+            filename: filename,
+            contentType: att.contentType || 'application/octet-stream',
+            size: att.size || 0,
+            contentId: att.contentId || undefined,
+            fileId: fileId,
+          });
+        } catch (e: any) {
+          log(`Failed to upload attachment ${att.filename}: ${e.message}`);
+        }
       }
     }
 
