@@ -1,0 +1,51 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - generic [ref=e6]: DM
+          - generic [ref=e7]:
+            - heading "DamnMail" [level=1] [ref=e8]
+            - paragraph [ref=e9]: Free, fast, multi-domain temporary mail.
+        - navigation [ref=e10]:
+          - link "Home" [ref=e11] [cursor=pointer]:
+            - /url: "#"
+          - link "About" [ref=e12] [cursor=pointer]:
+            - /url: "#about"
+          - link "GitHub" [ref=e13] [cursor=pointer]:
+            - /url: https://github.com/dinoadi/damnmail
+      - generic [ref=e14]:
+        - complementary [ref=e15]:
+          - generic [ref=e17]:
+            - generic [ref=e18]:
+              - heading "New Inbox" [level=2] [ref=e19]
+              - paragraph [ref=e20]: Choose a custom username or generate a random one. Real-time updates without refreshing.
+            - generic [ref=e21]:
+              - generic [ref=e22]: Address Configuration
+              - generic [ref=e23]:
+                - textbox "username" [ref=e24]
+                - generic [ref=e25]: "@"
+                - combobox [ref=e26]:
+                  - option "readyonbooking.app" [selected]
+            - generic [ref=e27]:
+              - button "Create Custom Inbox" [ref=e28] [cursor=pointer]
+              - button "Generate Random" [ref=e29] [cursor=pointer]
+            - generic [ref=e32]:
+              - paragraph [ref=e33]: Current Inbox
+              - paragraph [ref=e34]: No active inbox
+              - paragraph [ref=e35]: Create an inbox to receive mail.
+        - generic [ref=e36]:
+          - generic [ref=e37]:
+            - generic [ref=e38]:
+              - generic [ref=e39]:
+                - heading "Incoming Mail" [level=2] [ref=e40]
+                - paragraph [ref=e45]: Offline - create inbox
+              - generic [ref=e47]: 0 messages
+            - generic [ref=e49]:
+              - paragraph [ref=e50]: No messages yet.
+              - paragraph [ref=e51]: Waiting for incoming emails to your inbox...
+          - generic [ref=e52]:
+            - heading "Message Viewer" [level=2] [ref=e54]
+            - generic [ref=e55]: Select a message from the inbox to view its contents.
+      - generic [ref=e56]: DamnMail is an open-source temporary email service built on Netlify and Appwrite. Free to use, respecting your privacy.
+  - alert [ref=e57]

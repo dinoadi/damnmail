@@ -1,0 +1,10 @@
+{
+  "name": "telegram-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "grammy": "^1.33.0",
+    "node-appwrite": "^15.0.0"
+  }
+}

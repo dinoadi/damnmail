@@ -1,0 +1,10 @@
+{
+  "name": "process-email",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "mailparser": "^3.7.2",
+    "node-appwrite": "^15.0.0"
+  }
+}

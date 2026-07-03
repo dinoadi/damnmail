@@ -1,0 +1,425 @@
+================================================================================
+                    DAMNMAIL - PANDUAN INSTALLASI & DOMAIN SETUP
+================================================================================
+
+DamnMail adalah platform temporary email multi-domain yang menggunakan:
+- Backend: Fastify + SMTP Server
+- Frontend: Next.js
+- Database: PostgreSQL
+- Reverse Proxy: Caddy (SSL/TLS otomatis)
+- Container: Docker
+
+================================================================================
+                         PREREQUISITES (SYARAT WAJIB)
+================================================================================
+
+1. VPS/Server dengan minimal:
+   - RAM: 1GB (recommended 2GB+)
+   - Storage: 20GB+ (untuk attachments)
+   - OS: Ubuntu 22.04/24.04 atau Debian 12
+
+2. Domain yang sudah dibeli:
+   - Contoh: damnmail.com, apadeh.me
+   - Domain ini akan digunakan untuk menerima email
+
+3. DNS Access untuk mengubah records di domain registrar
+
+4. Port yang harus terbuka di VPS:
+   - Port 25 (SMTP) - untuk menerima email
+   - Port 80 (HTTP) - untuk redirect ke HTTPS
+   - Port 443 (HTTPS) - untuk akses web
+
+5. Docker & Docker Compose sudah terinstall
+
+================================================================================
+                      LANGKAH 1: KONFIGURASI DNS
+================================================================================
+
+Untuk SETIAP domain yang ingin digunakan, lakukan konfigurasi DNS berikut:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ A. Buat A Record untuk Mail Host                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Type  | Name    | Value            | TTL                                  │
+│  ------|---------|------------------|-------                                │
+│  A     | mail    | <VPS_IP_ADDRESS> | 3600                                  │
+│                                                                             │
+│  Contoh untuk domain damnmail.com:                                          │
+│  - mail.damnmail.com -> 103.123.45.67                                       │
+│                                                                             │
+│  Contoh untuk domain apadeh.me:                                             │
+│  - mail.apadeh.me -> 103.123.45.67                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ B. Buat MX Record untuk Domain                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Type  | Name  | Value                    | Priority | TTL                  │
+│  ------|-------|--------------------------|----------|------                │
+│  MX    | @     | mail.damnmail.com        | 10       | 3600                 │
+│  MX    | @     | mail.apadeh.me           | 10       | 3600                 │
+│                                                                             │
+│  Catatan:                                                                   │
+│  - "@" berarti root domain (damnmail.com, bukan subdomain)                 │
+│  - Priority 10 = prioritas utama untuk menerima email                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ C. Buat SPF Record (TXT Record)                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Type  | Name  | Value                  | TTL                              │
+│  ------|-------|------------------------|-------                            │
+│  TXT   | @     | v=spf1 mx ~all        | 3600                              │
+│                                                                             │
+│  Penjelasan:                                                                │
+│  - v=spf1 = versi SPF protocol                                             │
+│  - mx = izinkan mail server dari MX record untuk mengirim                  │
+│  - ~all = tandai email lain sebagai softfail (recommended untuk start)     │
+│                                                                             │
+│  Setelah yakin stabil, ganti "~all" dengan "-all" (hard fail)              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ D. (RECOMMENDED) Buat DKIM Record                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  DKIM belum di-generate secara default. Untuk enhanced security:           │
+│                                                                             │
+│  1. Generate DKIM key di VPS:                                               │
+│     openssl genrsa -out dkim-private.pem 2048                               │
+│     openssl rsa -in dkim-private.pem -pubout -out dkim-public.pem          │
+│                                                                             │
+│  2. Buat TXT Record:                                                       │
+│     Type  | Name                    | Value                                │
+│     ------|-------------------------|--------------------------------------│
+│     TXT   | default._domainkey      | v=DKIM1; k=rsa; p=<PUBLIC_KEY>       │
+│                                                                             │
+│     Ganti <PUBLIC_KEY> dengan isi file dkim-public.pem tanpa               │
+│     header "-----BEGIN..." dan footer "-----END..."                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ E. (RECOMMENDED) Buat DMARC Record                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Type  | Name  | Value                                          | TTL     │
+│  ------|-------|------------------------------------------------|---------│
+│  TXT   | _dmarc| v=DMARC1; p=quarantine; rua=mailto:admin@damnmail.com | 3600│
+│                                                                             │
+│  Penjelasan:                                                                │
+│  - p=quarantine = email gagal masuk spam folder (mulai dari ini)           │
+│  - p=none = monitor saja (untuk awal testing)                              │
+│  - p=reject = tolak email gagal (untuk production ketika yakin)            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                    LANGKAH 2: CLONE & KONFIGURASI PROJECT
+================================================================================
+
+1. Clone repository ke VPS:
+   cd /opt
+   git clone <REPO_URL> damnmail
+   cd damnmail
+
+2. Buat file .env dari template:
+   cp .env.example .env
+
+3. Edit file .env dengan konfigurasi production:
+
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │ File: .env                                                             │
+   ├─────────────────────────────────────────────────────────────────────────┤
+   │                                                                         │
+   │ # Domain yang akan digunakan (pisahkan dengan koma)                    │
+   │ DOMAINS=damnmail.com,apadeh.me                                         │
+   │                                                                         │
+   │ # URL frontend untuk redirects                                          │
+   │ FRONTEND_URL=https://damnmail.com                                       │
+   │                                                                         │
+   │ # Database PostgreSQL                                                   │
+   │ DATABASE_URL=postgresql://postgres:postgres@postgres:5432/damnmail      │
+   │                                                                         │
+   │ # Gunakan database untuk production                                     │
+   │ MAIL_STORAGE_MODE=database                                              │
+   │                                                                         │
+   │ # SMTP hostname (harus sesuai dengan A record)                         │
+   │ SMTP_HOSTNAME=mail.damnmail.com                                         │
+   │                                                                         │
+   │ # Admin API key - GANTI dengan random string yang kuat!                 │
+   │ ADMIN_API_KEY=your-super-secret-admin-key-here                         │
+   │                                                                         │
+   │ # Port SMTP (25 untuk production)                                       │
+   │ SMTP_PORT=25                                                            │
+   │                                                                         │
+   │ # Simpan attachments                                                     │
+   │ ATTACHMENT_STORAGE_DIR=./data/attachments                               │
+   │                                                                         │
+   │ # Telegram (opsional)                                                   │
+   │ TELEGRAM_BOT_TOKEN=                                                     │
+   │ TELEGRAM_ADMIN_CHAT_IDS=                                                │
+   │                                                                         │
+   └─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                    LANGKAH 3: KONFIGURASI CADDYFILE
+================================================================================
+
+Edit file Caddyfile untuk menggunakan domain production:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ File: Caddyfile                                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│ {$DOMAIN:damnmail.com} {                                                   │
+│   encode zstd gzip                                                         │
+│                                                                             │
+│   handle_path /api/* {                                                     │
+│     reverse_proxy backend:3001                                             │
+│   }                                                                        │
+│                                                                             │
+│   reverse_proxy frontend:3000                                              │
+│ }                                                                          │
+│                                                                             │
+│ Catatan:                                                                    │
+│ - Caddy akan otomatis mendapatkan SSL certificate dari Let's Encrypt       │
+│ - Domain harus sudah ter-resolve ke IP VPS sebelum container start         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                    LANGKAH 4: BUILD & DEPLOY DENGAN DOCKER
+================================================================================
+
+1. Build semua container:
+   docker compose up --build -d
+
+2. Tunggu hingga selesai (biasanya 3-5 menit untuk pertama kali)
+
+3. Jalankan database migration:
+   docker compose exec backend corepack pnpm --filter @damnmail/backend prisma:migrate:deploy
+
+4. Seed data awal (domain yang sudah dikonfigurasi di .env):
+   docker compose exec backend corepack pnpm --filter @damnmail/backend prisma:seed
+
+5. Cek status container:
+   docker compose ps
+
+6. Lihat logs jika ada error:
+   docker compose logs -f backend
+   docker compose logs -f caddy
+
+================================================================================
+                    LANGKAH 5: VERIFIKASI INSTALASI
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ A. Cek Akses Web                                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Buka browser dan akses:                                                   │
+│  - https://damnmail.com                                                    │
+│  - https://apadeh.me                                                       │
+│                                                                             │
+│  Pastikan SSL certificate valid (icon gembok di address bar)              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ B. Cek API Health                                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  curl -H "x-admin-api-key: <ADMIN_API_KEY>" \                             │
+│    https://damnmail.com/api/admin/health                                   │
+│                                                                             │
+│  Expected response: {"status":"ok"}                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ C. Cek SMTP Server                                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Menggunakan swaks (jika sudah install):                                   │
+│  swaks --server mail.damnmail.com \                                        │
+│         --port 25 \                                                        │
+│         --to test@damnmail.com \                                           │
+│         --from sender@gmail.com \                                          │
+│         --header "Subject: Test SMTP" \                                   │
+│         --body "Hello from DamnMail test"                                  │
+│                                                                             │
+│  Atau menggunakan telnet:                                                  │
+│  telnet mail.damnmail.com 25                                               │
+│  EHLO test.com                                                             │
+│  MAIL FROM:<sender@gmail.com>                                              │
+│  RCPT TO:<test@damnmail.com>                                               │
+│  DATA                                                                       │
+│  Subject: Test Email                                                       │
+│  Test body                                                                 │
+│  .                                                                          │
+│  QUIT                                                                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ D. Cek DNS Records (dari VPS atau local)                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  # Cek MX record                                                          │
+│  dig MX damnmail.com +short                                               │
+│  Expected: mail.damnmail.com                                               │
+│                                                                             │
+│  # Cek A record                                                            │
+│  dig A mail.damnmail.com +short                                            │
+│  Expected: <VPS_IP_ADDRESS>                                                │
+│                                                                             │
+│  # Cek SPF                                                                 │
+│  dig TXT damnmail.com +short | grep spf                                   │
+│  Expected: "v=spf1 mx ~all"                                               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                    LANGKAH 6: TAMBAH DOMAIN BARU (OPSIONAL)
+================================================================================
+
+Jika ingin menambah domain baru setelah instalasi:
+
+1. Pastikan DNS sudah dikonfigurasi (MX, A, SPF records)
+
+2. Tambahkan ke .env:
+   DOMAINS=damnmail.com,apadeh.me,newdomain.com
+
+3. Restart backend:
+   docker compose restart backend
+
+4. Atau gunakan Admin API:
+   curl -X POST https://damnmail.com/api/admin/domains \
+     -H "Content-Type: application/json" \
+     -H "x-admin-api-key: <ADMIN_API_KEY>" \
+     -d '{"domain":"newdomain.com","isActive":true}'
+
+================================================================================
+                       TROUBLESHOOTING
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: Website tidak bisa diakses                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Solusi:                                                                    │
+│ 1. Cek apakah Caddy container running: docker compose ps caddy           │
+│ 2. Cek logs: docker compose logs caddy                                    │
+│ 3. Pastikan port 80 & 443 terbuka di firewall/VPS provider               │
+│ 4. Pastikan domain sudah pointing ke IP VPS                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: Email tidak masuk ke inbox                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Solusi:                                                                    │
+│ 1. Cek port 25 terbuka: telnet mail.damnmail.com 25                      │
+│ 2. Cek SMTP logs: docker compose logs backend | grep smtp                 │
+│ 3. Cek DNS MX record: dig MX domain.com                                  │
+│ 4. Pastikan MAIL_STORAGE_MODE=database di .env                           │
+│ 5. Cek database connection: docker compose logs backend | grep prisma     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: SSL Certificate gagal                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Solusi:                                                                    │
+│ 1. Pastikan domain sudah pointing ke VPS (dns propagation bisa 24-48 jam)│
+│ 2. Cek port 80 terbuka untuk Let's Encrypt verification                  │
+│ 3. Cek Caddy logs: docker compose logs caddy                             │
+│ 4. Force renew: docker compose exec caddy caddy renew                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Problem: Database connection error                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Solusi:                                                                    │
+│ 1. Cek postgres container: docker compose ps postgres                     │
+│ 2. Cek DATABASE_URL format: postgresql://user:pass@host:port/dbname       │
+│ 3. Cek postgres logs: docker compose logs postgres                        │
+│ 4. Jalankan migration ulang:                                              │
+│    docker compose exec backend corepack pnpm --filter @damnmail/backend \  │
+│      prisma:migrate:deploy                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                    SECURITY NOTES (CATATAN KEAMANAN)
+================================================================================
+
+1. GANTI ADMIN_API_KEY dengan random string yang kuat:
+   openssl rand -hex 32
+
+2. Jangan commit file .env ke repository
+
+3. Backup database secara berkala:
+   docker compose exec postgres pg_dump -U postgres damnmail > backup.sql
+
+4. Monitor logs untuk activity mencurigakan:
+   docker compose logs -f | grep -i "error\|fail\|invalid"
+
+5. Pertimbangkan untuk menambahkan:
+   - Rate limiting
+   - Abusw protection
+   - IP whitelist untuk admin endpoints
+
+================================================================================
+                    USEFUL COMMANDS
+================================================================================
+
+# Lihat semua container
+docker compose ps
+
+# Lihat logs semua service
+docker compose logs -f
+
+# Lihat logs spesifik
+docker compose logs -f backend
+docker compose logs -f caddy
+docker compose logs -f postgres
+
+# Restart semua service
+docker compose restart
+
+# Restart service spesifik
+docker compose restart backend
+
+# Stop semua service
+docker compose down
+
+# Stop dan hapus volumes (HATI-HATI: menghapus data)
+docker compose down -v
+
+# Jalankan command di container
+docker compose exec backend sh
+docker compose exec postgres psql -U postgres damnmail
+
+# Cek disk usage
+docker system df
+
+# Cleanup unused images
+docker image prune -f
+
+================================================================================
+                         SELESAI
+================================================================================
+
+Setelah semua langkah selesai, DamnMail siap digunakan!
+
+Akses dashboard: https://damnmail.com
+SMTP server: mail.damnmail.com:25
+Admin API: https://damnmail.com/api/admin/
+
+Untuk bantuan lebih lanjut, cek README.md atau buka issue di repository.
+
+================================================================================

@@ -1,471 +1,343 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { type FormEvent } from 'react'
-import { fetchJson, startPolling } from './lib/api'
+import { useEffect, useRef, useState } from 'react'
+import { startPolling } from './lib/api'
 import type { EmailViewModel } from './types'
 
-interface ApiResponse<T> {
-  success: boolean;
-  data: T;
-  error?: string;
+const PASSWORD = 'ZHAMBALA99'
+const AUTH_KEY = 'damnmail-auth'
+const THEME_KEY = 'damnmail-theme'
+const INBOX_ADDRESS = 'all@readyonbooking.app'
+
+// ─── Helpers ─────────────────────────────────────────────────────
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'now'
+  if (mins < 60) return `${mins}m`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h`
+  const days = Math.floor(hrs / 24)
+  return `${days}d`
 }
 
-function formatTimeUntilExpiry(expiresAt: string): string {
-  const msRemaining = new Date(expiresAt).getTime() - Date.now()
-  if (msRemaining <= 0) return 'Expired'
-
-  const totalMinutes = Math.floor(msRemaining / 60_000)
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  return `Expiring in ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+function senderInitial(from: string): string {
+  const match = from.match(/^"?([A-Za-z])/)
+  return match ? match[1].toUpperCase() : '#'
 }
 
-function relativeTime(dateString: string | undefined | null): string {
-  if (!dateString) return 'just now'
-  const date = new Date(dateString)
-  if (isNaN(date.getTime())) return 'just now'
-  const diffMs = Date.now() - date.getTime()
-  if (diffMs < 0) return 'just now'
-  const diffMinutes = Math.floor(diffMs / 60_000)
-  if (diffMinutes < 1) return 'just now'
-  if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`
-  const diffHours = Math.floor(diffMinutes / 60)
-  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-  const diffDays = Math.floor(diffHours / 24)
-  return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+function senderName(from: string): string {
+  const match = from.match(/^"?([^"<]+)"?\s*</)
+  if (match) return match[1].trim()
+  const emailMatch = from.match(/([^@]+)@/)
+  if (emailMatch) return emailMatch[1]
+  return from
 }
 
-function linkifyUrls(text: string): string {
-  if (!text) return ''
-  return text.replace(
-    /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/g,
-    '<a href="$1" target="_blank" rel="noreferrer" class="text-blue-600 underline hover:text-blue-800">$1</a>'
+function senderColor(from: string): string {
+  let hash = 0
+  for (let i = 0; i < from.length; i++) {
+    hash = from.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const colors = [
+    'bg-blue-500', 'bg-emerald-500', 'bg-violet-500', 'bg-amber-500',
+    'bg-rose-500', 'bg-cyan-500', 'bg-fuchsia-500', 'bg-lime-500'
+  ]
+  return colors[Math.abs(hash) % colors.length]
+}
+
+// ─── Icons ───────────────────────────────────────────────────────
+
+function SunIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="5" />
+      <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+      <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+    </svg>
   )
 }
 
-const PASSWORD = 'ZHAMBALA99'
-const STORAGE_KEY = 'damnmail-auth'
+function MoonIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  )
+}
+
+function InboxIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+    </svg>
+  )
+}
+
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </svg>
+  )
+}
+
+function LockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  )
+}
+
+function ArrowLeftIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+    </svg>
+  )
+}
+
+// ─── Theme Toggle ────────────────────────────────────────────────
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(false)
+
+  useEffect(() => {
+    setDark(document.documentElement.classList.contains('dark'))
+  }, [])
+
+  const toggle = () => {
+    const next = !dark
+    setDark(next)
+    document.documentElement.classList.toggle('dark', next)
+    localStorage.setItem(THEME_KEY, next ? 'dark' : 'light')
+  }
+
+  return (
+    <button
+      onClick={toggle}
+      className="relative flex items-center justify-center w-9 h-9 rounded-lg bg-panel-dark dark:bg-[#1a2540] hover:bg-line dark:hover:bg-[#243150] transition-colors"
+      aria-label="Toggle theme"
+    >
+      {dark ? <SunIcon className="text-amber-400" /> : <MoonIcon className="text-slate-500" />}
+    </button>
+  )
+}
+
+// ─── Password Gate ───────────────────────────────────────────────
 
 function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
-  const [input, setInput] = useState('')
-  const [wrong, setWrong] = useState('')
+  const [value, setValue] = useState('')
+  const [error, setError] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (input === PASSWORD) {
-      sessionStorage.setItem(STORAGE_KEY, '1')
+    if (value === PASSWORD) {
+      sessionStorage.setItem(AUTH_KEY, '1')
       onUnlock()
     } else {
-      setWrong('Password salah.')
-      setInput('')
+      setError(true)
+      setValue('')
+      inputRef.current?.focus()
     }
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="flex h-12 w-12 items-center justify-center rounded bg-black text-xl text-white">DM</div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">DamnMail</h1>
-            <p className="text-sm text-gray-500">Masukkan password untuk akses</p>
+    <div className="min-h-screen flex items-center justify-center px-4 relative z-10">
+      <div className="absolute top-4 right-4"><ThemeToggle /></div>
+      <form onSubmit={submit} className="w-full max-w-sm p-8 rounded-2xl bg-panel-light/80 dark:bg-panel-light/90 backdrop-blur-xl border border-line shadow-panel dark:shadow-panel-dark">
+        <div className="flex flex-col items-center gap-4 mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-accent/10 dark:bg-accent/20 flex items-center justify-center">
+            <LockIcon className="text-accent" />
           </div>
+          <h1 className="text-xl font-semibold text-ink">DamnMail</h1>
+          <p className="text-xs text-ink/40">*@readyonbooking.app</p>
         </div>
         <input
+          ref={inputRef}
           type="password"
-          value={input}
-          onChange={(e) => { setInput(e.target.value); setWrong('') }}
+          value={value}
+          onChange={e => { setValue(e.target.value); setError(false) }}
           placeholder="Password"
           autoFocus
-          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black mb-3"
+          className="w-full px-4 py-3 rounded-xl bg-canvas dark:bg-panel-dark border border-line focus:border-accent outline-none text-sm transition-colors"
         />
-        {wrong && <p className="mb-3 text-sm text-red-600">{wrong}</p>}
-        <button
-          type="submit"
-          className="w-full rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800"
-        >
-          Masuk
+        {error && <p className="text-xs text-red-500 mt-2 pl-1">Wrong password</p>}
+        <button type="submit" className="w-full mt-4 py-3 rounded-xl bg-accent hover:bg-accent-dark text-white text-sm font-medium transition-colors">
+          Unlock
         </button>
       </form>
-    </main>
+    </div>
   )
 }
 
-export default function Page() {
+// ─── Email Detail ────────────────────────────────────────────────
+
+function EmailDetail({ email, onBack }: { email: EmailViewModel; onBack: () => void }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-3 px-4 lg:px-6 py-3 border-b border-line">
+        <button onClick={onBack} className="lg:hidden p-1 rounded-lg hover:bg-panel-dark transition-colors">
+          <ArrowLeftIcon />
+        </button>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold truncate">{email.subject || '(no subject)'}</h2>
+          <p className="text-xs text-ink/50 truncate">{email.from}</p>
+        </div>
+        <span className="text-xs text-ink/40 flex-shrink-0">
+          {new Date(email.receivedAt).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        </span>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 lg:p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className={`w-10 h-10 rounded-full ${senderColor(email.from)} flex items-center justify-center text-white text-sm font-medium flex-shrink-0`}>
+            {senderInitial(email.from)}
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{senderName(email.from)}</p>
+            <p className="text-xs text-ink/40 truncate">to {email.to || INBOX_ADDRESS}</p>
+          </div>
+        </div>
+        {email.html ? (
+          <div className="email-content prose prose-sm max-w-none dark:prose-invert" dangerouslySetInnerHTML={{ __html: email.html }} />
+        ) : (
+          <pre className="text-sm whitespace-pre-wrap font-sans text-ink/80">{email.text || 'No content'}</pre>
+        )}
+        {email.attachments && email.attachments.length > 0 && (
+          <div className="mt-6 pt-4 border-t border-line">
+            <p className="text-xs font-medium text-ink/50 mb-2">{email.attachments.length} attachment{email.attachments.length > 1 ? 's' : ''}</p>
+            <div className="flex flex-wrap gap-2">
+              {email.attachments.map(att => (
+                <a key={att.id} href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-2 rounded-lg bg-panel-dark dark:bg-[#1a2540] border border-line hover:border-accent transition-colors truncate max-w-[200px]">
+                  {att.filename}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Main App ────────────────────────────────────────────────────
+
+export default function Home() {
   const [isUnlocked, setIsUnlocked] = useState(false)
-  const [inboxAddress, setInboxAddress] = useState('')
-  const [domains, setDomains] = useState<{ name: string; isActive: boolean }[]>([])
-  const [selectedDomain, setSelectedDomain] = useState('')
-  const [usernameInput, setUsernameInput] = useState('')
-  const [activeAddress, setActiveAddress] = useState('')
   const [messages, setMessages] = useState<EmailViewModel[]>([])
-  const [selectedMessage, setSelectedMessage] = useState<EmailViewModel | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [errorMessage, setErrorMessage] = useState('')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [messageCount, setMessageCount] = useState(0)
+
+  const selectedEmail = messages.find(m => m.id === selectedId) ?? null
 
   useEffect(() => {
-    if (sessionStorage.getItem(STORAGE_KEY)) {
-      setIsUnlocked(true)
-    }
+    if (sessionStorage.getItem(AUTH_KEY) === '1') setIsUnlocked(true)
   }, [])
 
   useEffect(() => {
-    if (!isUnlocked || !activeAddress) {
-      setMessages([])
-      setSelectedMessage(null)
-      return
-    }
-
-    const path = `/api/inboxes/${encodeURIComponent(activeAddress)}/messages`
-
-    fetchJson<ApiResponse<{ messages: EmailViewModel[] } | EmailViewModel[]>>(path)
-      .then((response) => {
-        if (response.success && response.data) {
-          const msgs = Array.isArray(response.data) ? response.data : (response.data as { messages: EmailViewModel[] }).messages || []
-          setMessages(msgs)
-          setSelectedMessage((current) => current ?? msgs[0] ?? null)
-        }
-      })
-      .catch(() => {
-        setErrorMessage('Gagal memuat inbox.')
-      })
-
-    const stopPolling = startPolling<ApiResponse<EmailViewModel[]>>(
-      path,
-      (response) => {
-        if (response.success && response.data) {
-          setMessages(response.data)
-        }
-      },
-      () => {
-        setErrorMessage('Gagal memuat stream inbox.')
-      },
-      4000
-    )
-
-    return () => { stopPolling() }
-  }, [isUnlocked, activeAddress])
-
-  useEffect(() => {
     if (!isUnlocked) return
-    fetchJson<ApiResponse<{ name: string; isActive: boolean }[]>>('/api/domains')
-      .then((response) => {
-        if (response.success && response.data) {
-          const active = response.data.filter((d: any) => d.isActive)
-          setDomains(active)
-          if (active.length > 0) {
-            setSelectedDomain((prev) => prev || active[0].name)
-          }
-        }
-      })
-      .catch(() => {})
+    const stop = startPolling(
+      `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`,
+      (data: EmailViewModel[]) => {
+        setMessages(data)
+        setMessageCount(data.length)
+        setIsLoading(false)
+      },
+      () => { setIsLoading(false) },
+      5000
+    )
+    return () => stop()
   }, [isUnlocked])
 
-  if (!isUnlocked) {
-    return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
-  }
+  if (!isUnlocked) return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
 
-  async function handleCheckInbox(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const trimmed = inboxAddress.trim()
-    if (!trimmed.includes('@')) {
-      setErrorMessage('Masukkan alamat email yang valid (contoh: nama@domain.app)')
-      return
-    }
-    setErrorMessage('')
-    setSelectedMessage(null)
-    setActiveAddress(trimmed.toLowerCase())
-  }
-
-  async function handleRefresh() {
-    if (!activeAddress) return
-    setIsLoading(true)
-    try {
-      const response = await fetchJson<ApiResponse<EmailViewModel[]>>(
-        `/api/inboxes/${encodeURIComponent(activeAddress)}/messages`
-      )
-      if (response.success && response.data) {
-          setMessages(response.data)
-      }
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Gagal merefresh inbox.')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-
-  function generateRandomUsername(): string {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
-    return Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
-  }
-
-  function handleGenerate() {
-    const domain = selectedDomain || (domains.length > 0 ? domains[0].name : '')
-    if (!domain) return
-    const username = generateRandomUsername()
-    const address = `${username}@${domain}`
-    setUsernameInput(username)
-    setInboxAddress(address)
-    setErrorMessage('')
-    setSelectedMessage(null)
-    setActiveAddress(address.toLowerCase())
-  }
   return (
-    <main className="relative min-h-screen bg-gray-50 text-gray-900 px-4 py-8 md:px-8">
-      <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        <header className="flex flex-col gap-4 border-b border-gray-200 pb-6 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded bg-black text-xl text-white">DM</div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">DamnMail</h1>
-              <p className="text-sm text-gray-500">Free, fast, multi-domain temporary mail.</p>
-            </div>
+    <div className="min-h-screen flex flex-col relative z-10">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 lg:px-6 h-14 border-b border-line bg-panel-light/70 dark:bg-panel-light/80 backdrop-blur-lg flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white">
+            <InboxIcon />
           </div>
-          <nav className="flex items-center gap-4 text-sm font-medium text-gray-600">
-            <a className="hover:text-black" href="#">Home</a>
-            <a className="hover:text-black" href="#about">About</a>
-            <a className="hover:text-black" href="https://github.com/dinoadi/damnmail" target="_blank" rel="noreferrer">GitHub</a>
-          </nav>
-        </header>
+          <div>
+            <h1 className="text-sm font-semibold leading-tight">DamnMail</h1>
+            <p className="text-[11px] text-ink/40 font-mono">{INBOX_ADDRESS}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-ink/40 font-mono mr-1">{messageCount}</span>
+          <ThemeToggle />
+          <button
+            onClick={() => { sessionStorage.removeItem(AUTH_KEY); window.location.reload() }}
+            className="px-3 py-1.5 rounded-lg text-xs text-ink/50 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+          >
+            Logout
+          </button>
+        </div>
+      </header>
 
-        <section className="grid gap-8 lg:grid-cols-3">
-          <aside className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-lg font-semibold">Check Inbox</h2>
-                <p className="mt-2 text-sm text-gray-500">
-                  Enter any email address to see its inbox. No registration needed.
-                </p>
-              </div>
-
-              <form onSubmit={handleCheckInbox} className="space-y-3">
-                <div className="grid gap-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-500">Email Address</label>
-                  <div className="flex items-stretch">
-                    <input
-                      value={usernameInput}
-                      onChange={(e) => {
-                        setUsernameInput(e.target.value)
-                        if (selectedDomain) {
-                          setInboxAddress(`${e.target.value}@${selectedDomain}`)
-                        }
-                      }}
-                      placeholder="username"
-                      className="w-full min-w-0 rounded-l-lg border border-r-0 border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black"
-                    />
-                    <span className="flex items-center border-y border-gray-300 bg-gray-50 px-2 text-sm text-gray-500 select-none">@</span>
-                    <select
-                      value={selectedDomain}
-                      onChange={(e) => {
-                        const domain = e.target.value
-                        setSelectedDomain(domain)
-                        if (usernameInput) {
-                          setInboxAddress(`${usernameInput}@${domain}`)
-                        }
-                      }}
-                      className="min-w-[120px] rounded-r-lg border border-l-0 border-gray-300 bg-white px-2 py-2 text-sm focus:border-black focus:outline-none focus:ring-1 focus:ring-black"
-                    >
-                      {domains.length === 0 && <option value="">No domains</option>}
-                      {domains.map((d) => (
-                        <option key={d.name} value={d.name}>{d.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={handleGenerate}
-                    className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-                  >
-                    Generate Random
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isLoading || !usernameInput || !selectedDomain}
-                    className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-50"
-                  >
-                    Cek Inbox
-                  </button>
-                </div>
-              </form>
-
-              {activeAddress && (
-                <div className="rounded-lg bg-gray-50 p-4 border border-gray-200">
-                  <div className="flex flex-col gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Active Inbox</p>
-                      <p className="mt-1 font-mono text-lg font-medium break-all text-black">{activeAddress}</p>
-                    </div>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(activeAddress)}
-                      className="self-start rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-                    >
-                      Copy Address
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {errorMessage ? <p className="text-sm text-red-600">{errorMessage}</p> : null}
+      {/* Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Message List */}
+        <div className={`${selectedEmail ? 'hidden lg:flex' : 'flex'} w-full lg:w-96 flex-shrink-0 border-r border-line bg-panel-light/50 dark:bg-panel-light/30 flex-col overflow-y-auto`}>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-20 text-ink/30">
+              <RefreshIcon className="animate-spin mb-3" />
+              <p className="text-sm">Loading...</p>
             </div>
-          </aside>
-
-          <section className="lg:col-span-2 flex flex-col gap-6">
-            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden flex flex-col min-h-[500px]">
-              <div className="border-b border-gray-200 bg-gray-50 px-5 py-4 flex items-center justify-between">
-                <div>
-                  <h2 className="font-semibold text-gray-900">Incoming Mail</h2>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="relative flex h-2 w-2">
-                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${activeAddress ? 'bg-green-400' : 'bg-gray-400'}`}></span>
-                      <span className={`relative inline-flex rounded-full h-2 w-2 ${activeAddress ? 'bg-green-500' : 'bg-gray-400'}`}></span>
-                    </span>
-                    <p className="text-xs text-gray-500">
-                      {activeAddress ? `Listening on ${activeAddress}` : 'Enter an address above'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {activeAddress && (
-                    <button
-                      onClick={() => void handleRefresh()}
-                      disabled={isLoading}
-                      className="rounded border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5 transition"
-                    >
-                      <svg className={`h-3 w-3 text-gray-500 ${isLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 4.89M9 11l3 3L22 4" />
-                      </svg>
-                      Refresh
-                    </button>
-                  )}
-                  <span className="rounded bg-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700">
-                    {messages.length} message{messages.length === 1 ? '' : 's'}
-                  </span>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto p-0">
-                {messages.length === 0 ? (
-                  <div className="flex h-full flex-col items-center justify-center p-8 text-center text-sm text-gray-500">
-                    <p>No messages yet.</p>
-                    <p className="mt-1">
-                      {activeAddress
-                        ? `Waiting for incoming emails to ${activeAddress}...`
-                        : 'Enter an email address to check its inbox.'}
-                    </p>
-                  </div>
-                ) : (
-                  <ul className="divide-y divide-gray-100">
-                    {messages.map((message) => (
-                      <li key={message.id}>
-                        <button
-                          onClick={() => setSelectedMessage(message)}
-                          className={`w-full p-4 text-left transition ${selectedMessage?.id === message.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-                        >
-                          <div className="flex justify-between items-baseline gap-2 mb-1">
-                            <p className="font-medium text-gray-900 truncate">{message.from}</p>
-                            <span className="text-xs text-gray-500 whitespace-nowrap">{relativeTime(message.receivedAt)}</span>
-                          </div>
-                          <p className="text-sm font-medium text-gray-800 truncate mb-1">{message.subject}</p>
-                          <p className="text-xs text-gray-500 line-clamp-2">{message.snippet}</p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+          ) : messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-ink/30">
+              <InboxIcon className="mb-3 w-8 h-8" />
+              <p className="text-sm">Inbox empty</p>
+              <p className="text-xs mt-1">Send email to *@readyonbooking.app</p>
             </div>
-
-            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden flex flex-col min-h-[400px]">
-              <div className="border-b border-gray-200 bg-gray-50 px-5 py-4">
-                <h2 className="font-semibold text-gray-900">Message Viewer</h2>
-              </div>
-
-              {selectedMessage ? (
-                <div className="flex-1 flex flex-col">
-                  <div className="border-b border-gray-100 p-5 bg-white">
-                    <div className="grid grid-cols-[80px_1fr] gap-y-2 text-sm">
-                      <span className="text-gray-500 font-medium">From:</span>
-                      <span className="text-gray-900">{selectedMessage.from}</span>
-                      <span className="text-gray-500 font-medium">To:</span>
-                      <span className="text-gray-900">{selectedMessage.to}</span>
-                      <span className="text-gray-500 font-medium">Date:</span>
-                      <span className="text-gray-900">{new Date(selectedMessage.receivedAt).toLocaleString()}</span>
-                      <span className="text-gray-500 font-medium">Subject:</span>
-                      <span className="text-gray-900 font-semibold">{selectedMessage.subject}</span>
-                    </div>
+          ) : (
+            messages.map(email => (
+              <button
+                key={email.id}
+                onClick={() => setSelectedId(email.id)}
+                className={`w-full text-left px-4 py-3 flex gap-3 border-b border-line/50 transition-colors ${
+                  selectedId === email.id
+                    ? 'bg-accent/10 dark:bg-accent/15'
+                    : 'hover:bg-panel-dark dark:hover:bg-[#0f1c33]'
+                }`}
+              >
+                <div className={`w-9 h-9 rounded-full ${senderColor(email.from)} flex-shrink-0 flex items-center justify-center text-white text-xs font-medium`}>
+                  {senderInitial(email.from)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium truncate">{senderName(email.from)}</span>
+                    <span className="text-[11px] text-ink/40 flex-shrink-0">{relativeTime(email.receivedAt)}</span>
                   </div>
-
-                  <div className="p-5 overflow-x-auto flex-1 bg-white">
-                    {selectedMessage.html ? (
-                      <iframe
-                        className="w-full h-full border-0 rounded-lg shadow-sm"
-                        srcDoc={selectedMessage.html}
-                        sandbox="allow-same-origin allow-popups allow-forms allow-scripts" // Minimal permissions
-                        title="Email Content"
-                      />
-                    ) : (
-                      <div className="prose prose-sm max-w-none bg-white p-4 rounded-lg shadow-sm border border-gray-200" dangerouslySetInnerHTML={{ __html: selectedMessage.html }} />
-                    ) : (
-                      <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: selectedMessage.html }} />
-                    ) : (
-                      <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: linkifyUrls(selectedMessage.text ?? '') }} />
-                    )}
-
-                    {selectedMessage.attachments && selectedMessage.attachments.length > 0 && (
-                      <div className="mt-8 border-t border-gray-100 pt-6">
-                        <h3 className="text-sm font-semibold text-gray-900 mb-3">Attachments ({selectedMessage.attachments.length})</h3>
-                        <div className="flex flex-wrap gap-3">
-                          {selectedMessage.attachments.map((att) => {
-                            const isImage = att.contentType.startsWith('image/')
-                            return (
-                              <div key={att.id} className="flex flex-col rounded-lg border border-gray-200 bg-gray-50 overflow-hidden max-w-xs">
-                                {isImage && att.downloadUrl && (
-                                  <div className="h-32 bg-gray-100 flex items-center justify-center border-b border-gray-200 overflow-hidden">
-                                    <img src={att.downloadUrl} alt={att.filename} className="max-h-full max-w-full object-contain" />
-                                  </div>
-                                )}
-                                <div className="p-3 flex items-center gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-medium text-gray-900 truncate" title={att.filename}>{att.filename}</p>
-                                    <p className="text-[10px] text-gray-500">{(att.size / 1024).toFixed(1)} KB</p>
-                                  </div>
-                                  {att.downloadUrl ? (
-                                    <a
-                                      href={att.downloadUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="rounded bg-black px-2.5 py-1 text-xs font-semibold text-white hover:bg-gray-800 transition"
-                                    >
-                                      Download
-                                    </a>
-                                  ) : (
-                                    <span className="text-xs text-gray-400">Unavailable</span>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
+                  <p className="text-sm truncate text-ink/80 dark:text-ink/60 mt-0.5">{email.subject || '(no subject)'}</p>
+                  {email.snippet && <p className="text-xs truncate text-ink/40 mt-0.5">{email.snippet}</p>}
                 </div>
-              </div>
-              ) : (
-                <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 flex-1">
-                  Select a message from the inbox to view its contents.
-                </div>
-              )}
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* Detail Panel */}
+        <div className={`${selectedEmail ? 'flex' : 'hidden lg:flex'} flex-1 flex-col`}>
+          {selectedEmail ? (
+            <EmailDetail email={selectedEmail} onBack={() => setSelectedId(null)} />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-ink/20">
+              <InboxIcon className="w-10 h-10 mb-3" />
+              <p className="text-sm">Select an email</p>
             </div>
-          </section>
-        </section>
-
-        <footer id="about" className="mt-8 rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm text-center">
-          DamnMail is an open-source temporary email service built on Netlify and Appwrite. Free to use, respecting your privacy.
-        </footer>
+          )}
+        </div>
       </div>
-    </main>
+    </div>
   )
 }
