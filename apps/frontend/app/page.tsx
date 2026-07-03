@@ -32,7 +32,7 @@ function relativeTime(dateString: string): string {
 
   const diffHours = Math.floor(diffMinutes / 60)
   return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-
+}
 const PASSWORD = 'ZHAMBALA99'
 const STORAGE_KEY = 'damnmail-auth'
 
