@@ -38,9 +38,13 @@ export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
           const recipients = session.envelope.rcptTo.map((recipient) => recipient.address)
 
           for (const recipient of recipients) {
-            const inbox = await options.inboxService.getInbox(recipient)
+            let inbox = await options.inboxService.getInbox(recipient)
             if (!inbox) {
-              continue
+              const [localPart, domain] = recipient.split('@')
+              inbox = await options.inboxService.createInbox({
+                username: localPart,
+                domain: normalizeDomain(domain)
+              })
             }
 
             const storedAttachments = [] as Array<{ id: string; filename: string; contentType: string; size: number; storagePath: string }>
