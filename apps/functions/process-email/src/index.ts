@@ -94,10 +94,20 @@ export default async ({ req, res, log, error }: any) => {
         Query.limit(1),
       ]);
       if (inboxes.documents.length === 0) {
-        log(`No matching inbox for ${inboxAddress}, skipping.`);
-        return res.json({ success: false, error: 'Inbox not found' }, 404);
+        log(`No matching inbox for ${inboxAddress}, auto-creating...`);
+        const [localPart, domainName] = inboxAddress.split('@');
+        const ttlHours = parseInt(process.env.EMAIL_TTL_HOURS || '168', 10);
+        inboxDoc = await databases.createDocument(DB_ID, COLL_INBOXES, 'unique()', {
+          username: localPart,
+          domain: domainName,
+          address: inboxAddress,
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString(),
+        });
+        log(`Auto-created inbox ${inboxAddress}`);
+      } else {
+        inboxDoc = inboxes.documents[0];
       }
-      inboxDoc = inboxes.documents[0];
     }
 
     // Check if expired
