@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { type FormEvent } from 'react'
 import { fetchJson, startPolling } from './lib/api'
 import type { DomainViewModel, EmailViewModel, InboxViewModel } from './types'
 
