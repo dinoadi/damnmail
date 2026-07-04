@@ -29,6 +29,11 @@ export default async ({ req, res, log, error }: any) => {
       const innerBody = typeof body.body === 'string' && body.body.length > 0 ? JSON.parse(body.body) : (body.body || {});
       body = innerBody;
     }
+
+    // Normalize: add /api prefix if missing (Appwrite hosting proxy strips it)
+    if (!path.startsWith('/api') && path.startsWith('/')) {
+      path = `/api${path}`;
+    }
     const headers = req.headers || {};
     const query = req.query || {};
 
@@ -44,9 +49,16 @@ export default async ({ req, res, log, error }: any) => {
       return await handleCreateInbox(databases, body, res, error);
     }
 
-    if (path?.startsWith('/api/inboxes/') && path?.endsWith('/messages') && method === 'GET') {
-      const address = path.replace('/api/inboxes/', '').replace('/messages', '');
-      return await handleListMessages(databases, storage, decodeURIComponent(address), res, error);
+    // GET /api/inboxes/:address/messages
+    const msgMatch = path.match(/^\/api\/inboxes\/([^/]+)\/messages$/);
+    if (msgMatch && method === 'GET') {
+      return await handleListMessages(databases, storage, decodeURIComponent(msgMatch[1]), res, error);
+    }
+
+    // GET /api/inboxes/:address/stats
+    const statsMatch = path.match(/^\/api\/inboxes\/([^/]+)\/stats$/);
+    if (statsMatch && method === 'GET') {
+      return await handleInboxStats(databases, storage, decodeURIComponent(statsMatch[1]), res, error);
     }
 
     if (path === '/api/admin/domains' && method === 'POST') {
@@ -83,102 +95,9 @@ async function handleListDomains(databases: Databases, res: any) {
     return res.json({ success: true, data: [] });
   }
 }
-
-async function handleCreateInbox(databases: Databases, body: any, res: any, error: any) {
-  const { username, domain, telegramChatId } = body;
-
-  if (!username || !domain) {
-    return res.json({ success: false, error: 'username and domain are required' }, 400);
-  }
-
-  // Validate username
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(username)) {
-    return res.json({ success: false, error: 'Invalid username format' }, 400);
-  }
-
-  try {
-    // Check domain exists and is active
-    try {
-      const domainDoc = await databases.getDocument(DB_ID, COLL_DOMAINS, domain);
-      if (!domainDoc.isActive) {
-        return res.json({ success: false, error: 'Domain is not active' }, 400);
-      }
-    } catch {
-      // Try listing to find domain
-      const domains = await databases.listDocuments(DB_ID, COLL_DOMAINS, [
-        Query.equal('name', domain),
-        Query.equal('isActive', true),
-        Query.limit(1),
-      ]);
-      if (domains.documents.length === 0) {
-        return res.json({ success: false, error: 'Domain not found or not active' }, 400);
-      }
-    }
-
-    const address = `${username}@${domain}`;
-    const ttlHours = parseInt(process.env.EMAIL_TTL_HOURS || '168', 10);
-    const now = Date.now();
-    const expiresAt = new Date(now + ttlHours * 60 * 60 * 1000).toISOString();
-
-    // Check if inbox already exists by querying address
-    const existingInboxes = await databases.listDocuments(DB_ID, COLL_INBOXES, [
-      Query.equal('address', address),
-      Query.limit(1),
-    ]);
-    if (existingInboxes.documents.length > 0) {
-      const existingInbox = existingInboxes.documents[0];
-      return res.json({
-        success: true,
-        data: {
-          id: existingInbox.$id,
-          username: existingInbox.username,
-          domain: existingInbox.domain,
-          address: existingInbox.address,
-          createdAt: existingInbox.createdAt,
-          expiresAt: existingInbox.expiresAt,
-          telegramChatId: existingInbox.telegramChatId || undefined,
-        },
-      });
-}
-
-    const inbox = await databases.createDocument(DB_ID, COLL_INBOXES, 'unique()', {
-      username,
-      address,
-      domain,
-      telegramChatId: telegramChatId || '',
-      createdAt: new Date(now).toISOString(),
-      expiresAt,
-    });
-
-
-    return res.json({
-      success: true,
-      data: {
-        id: inbox.$id,
-        username: inbox.username,
-        domain: inbox.domain,
-        address: inbox.address,
-        createdAt: inbox.createdAt,
-        expiresAt: inbox.expiresAt,
-        telegramChatId: inbox.telegramChatId || undefined,
-      },
-    });
-  } catch (err: any) {
-    error(`Create inbox error: ${err.message}`);
-    return res.json({ success: false, error: 'Failed to create inbox' }, 500);
-  }
-}
+// handleCreateInbox not used (we use fixed inbox all@readyonbooking.app)
 
 async function handleListMessages(databases: Databases, storage: Storage, addressLookup: string, res: any, error: any) {
-  try {
-    // Verify inbox exists by address attribute
-    const inboxes = await databases.listDocuments(DB_ID, COLL_INBOXES, [
-      Query.equal('address', addressLookup),
-      Query.limit(1),
-    ]);
-    if (inboxes.documents.length === 0) {
-      return res.json({ success: true, data: [] });
-    }
     const result = await databases.listDocuments(DB_ID, COLL_EMAILS, [
       Query.equal('inboxAddress', addressLookup),
       Query.orderDesc('$createdAt'),
@@ -223,6 +142,60 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
     error(`List messages error: ${err.message}`);
     return res.json({ success: false, error: 'Failed to list messages' }, 500);
   }
+}
+
+async function handleInboxStats(databases: Databases, storage: Storage, address: string, res: any, error: any) {
+  try {
+    // Count emails for this inbox
+    const emailResult = await databases.listDocuments(DB_ID, COLL_EMAILS, [
+      Query.equal('inboxAddress', address),
+      Query.limit(0),
+    ]);
+
+    // Count and sum attachment sizes from storage bucket
+    const allFiles = await storage.listFiles(BUCKET_ATTACHMENTS);
+    const totalAttachments = allFiles.total;
+    const storageUsedBytes = allFiles.files.reduce((sum: number, f: any) => sum + (f.sizeOriginal || f.size || 0), 0);
+
+    const storageLimit = 500 * 1024 * 1024; // 500MB
+
+    return res.json({
+      success: true,
+      data: {
+        inboxAddress: address,
+        totalEmails: emailResult.total,
+        totalAttachments,
+        storageUsedBytes,
+        storageLimit,
+        storageUsedFormatted: formatBytes(storageUsedBytes),
+        storageLimitFormatted: formatBytes(storageLimit),
+        usagePercent: Math.round((storageUsedBytes / storageLimit) * 100),
+      },
+    });
+  } catch (err: any) {
+    error(`Inbox stats error: ${err.message}`);
+    return res.json({
+      success: true,
+      data: {
+        inboxAddress: address,
+        totalEmails: 0,
+        totalAttachments: 0,
+        storageUsedBytes: 0,
+        storageLimit: 500 * 1024 * 1024,
+        storageUsedFormatted: '0 B',
+        storageLimitFormatted: '500 MB',
+        usagePercent: 0,
+      },
+    });
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const val = bytes / Math.pow(1024, i);
+  return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`;
 }
 
 async function handleAdminUpsertDomain(databases: Databases, body: any, headers: any, res: any, error: any) {

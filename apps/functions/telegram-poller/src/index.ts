@@ -215,7 +215,7 @@ async function createInbox(
     }
   } catch {}
 
-  const ttlHours = parseInt(process.env.EMAIL_TTL_HOURS || '24', 10)
+  const ttlHours = parseInt(process.env.EMAIL_TTL_HOURS || '720', 10)
   const now = Date.now()
   const expiresAt = new Date(now + ttlHours * 60 * 60 * 1000).toISOString()
 

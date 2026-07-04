@@ -30,7 +30,7 @@ export default async ({ req, res, log, error }: any) => {
         try {
           // Delete all emails for this inbox
           const emails = await databases.listDocuments(DB_ID, COLL_EMAILS, [
-            Query.equal('inboxAddress', inbox.$id),
+            Query.equal('inboxAddress', inbox.address),
             Query.limit(100),
           ]);
 

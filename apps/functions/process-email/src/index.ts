@@ -88,30 +88,30 @@ export default async ({ req, res, log, error }: any) => {
     const storage = new Storage(client);
 
     let inboxDoc: any;
-    try {
-      inboxDoc = await databases.getDocument(DB_ID, COLL_INBOXES, inboxAddress);
-    } catch {
-      log(`Inbox ${inboxAddress} not found, checking for similar...`);
-      // Try to find by listing
-      const inboxes = await databases.listDocuments(DB_ID, COLL_INBOXES, [
-        Query.equal('address', inboxAddress),
-        Query.limit(1),
-      ]);
-      if (inboxes.documents.length === 0) {
-        log(`No matching inbox for ${inboxAddress}, auto-creating...`);
-        const [localPart, domainName] = inboxAddress.split('@');
-        const ttlHours = parseInt(process.env.EMAIL_TTL_HOURS || '168', 10);
-        inboxDoc = await databases.createDocument(DB_ID, COLL_INBOXES, 'unique()', {
-          username: localPart,
-          domain: domainName,
-          address: inboxAddress,
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString(),
-        });
-        log(`Auto-created inbox ${inboxAddress}`);
-      } else {
-        inboxDoc = inboxes.documents[0];
-      }
+    let inboxCreated = false;
+
+    // Cari inbox berdasarkan address field (bukan document ID)
+    const existingInboxes = await databases.listDocuments(DB_ID, COLL_INBOXES, [
+      Query.equal('address', inboxAddress),
+      Query.limit(1),
+    ]);
+
+    if (existingInboxes.documents.length > 0) {
+      inboxDoc = existingInboxes.documents[0];
+      log(`Found existing inbox ${inboxAddress}`);
+    } else {
+      log(`No existing inbox for ${inboxAddress}, auto-creating...`);
+      const [localPart, domainName] = inboxAddress.split('@');
+      const ttlHours = parseInt(process.env.EMAIL_TTL_HOURS || '720', 10);
+      inboxDoc = await databases.createDocument(DB_ID, COLL_INBOXES, 'unique()', {
+        username: localPart,
+        domain: domainName,
+        address: inboxAddress,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString(),
+      });
+      inboxCreated = true;
+      log(`Auto-created inbox ${inboxAddress}`);
     }
 
     // Check if expired
@@ -120,7 +120,6 @@ export default async ({ req, res, log, error }: any) => {
       log(`Inbox ${inboxAddress} has expired, storing anyway.`);
     }
 
-    // Process attachments
     // Process attachments
     const attachments: any[] = [];
     if (parsed.attachments && parsed.attachments.length > 0) {
@@ -154,7 +153,7 @@ export default async ({ req, res, log, error }: any) => {
       to,
       subject,
       snippet,
-      // html field removed — not in collection schema
+      html,
       text,
       attachments: JSON.stringify(attachments),
       createdAt: new Date().toISOString(),

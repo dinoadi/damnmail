@@ -32,3 +32,14 @@ export interface EmailViewModel {
   receivedAt: string
   attachments: AttachmentViewModel[]
 }
+
+export interface StorageStats {
+  inboxAddress: string
+  totalEmails: number
+  totalAttachments: number
+  storageUsedBytes: number
+  storageLimit: number
+  storageUsedFormatted: string
+  storageLimitFormatted: string
+  usagePercent: number
+}
