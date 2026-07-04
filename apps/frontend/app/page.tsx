@@ -17,6 +17,7 @@ interface Attachment {
   contentType: string
   size: number
   downloadUrl: string
+  contentId?: string
 }
 
 interface Email {
@@ -106,6 +107,28 @@ function extractName(email: string): string {
   return email
 }
 
+function renderEmailHtml(email: Email): string {
+  if (!email.html) return ''
+  // Replace CID inline image references with actual attachment URLs
+  const cidMap = new Map<string, string>();
+  if (email.attachments) {
+    for (const att of email.attachments) {
+      if (att.contentId && att.downloadUrl) {
+        const cid = att.contentId.replace(/^<|>$/g, '');
+        cidMap.set(cid, att.downloadUrl);
+      }
+    }
+  }
+  let htmlContent = email.html || '';
+  if (cidMap.size > 0) {
+    htmlContent = htmlContent.replace(/src=["']cid:([^"']+)["']/gi, (match, cid) => {
+      const url = cidMap.get(cid);
+      return url ? `src="${url}"` : match;
+    });
+  }
+  return htmlContent;
+}
+
 function copyToClipboard(text: string) {
   if (navigator.clipboard) {
     navigator.clipboard.writeText(text)
@@ -173,7 +196,7 @@ function ThemeToggle() {
   const [dark, setDark] = useState(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem('theme')
+    const stored = localStorage.getItem('damnmail-theme');
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
     const isDark = stored ? stored === 'dark' : prefersDark
     setDark(isDark)
@@ -184,7 +207,7 @@ function ThemeToggle() {
     const next = !dark
     setDark(next)
     document.documentElement.classList.toggle('dark', next)
-    localStorage.setItem('theme', next ? 'dark' : 'light')
+    localStorage.setItem('damnmail-theme', next ? 'dark' : 'light');
   }
 
   return (
@@ -199,14 +222,26 @@ function ThemeToggle() {
 }
 
 function StorageBar({ stats }: { stats: StorageStats | null }) {
-  if (!stats) return null
-  const pct = Math.min(stats.usagePercent, 100)
-
+  if (!stats) {
+    return (
+      <div className="flex items-center gap-2.5 text-[11px] text-ink-secondary/60">
+        <div className="w-20 sm:w-28 h-1.5 rounded-full bg-line/60 overflow-hidden">
+          <div className="w-0 h-full rounded-full bg-accent/40 animate-pulse" />
+        </div>
+      </div>
+    )
+  }
+  const pct = stats.storageLimit > 0 ? Math.min((stats.storageUsedBytes / stats.storageLimit) * 100, 100) : 0
+  const used = stats.storageUsedFormatted || formatBytes(stats.storageUsedBytes)
+  const total = stats.storageLimitFormatted || formatBytes(stats.storageLimit)
   return (
-    <div className="flex items-center gap-2.5 text-xs text-ink-secondary">
-      <div className="w-28 h-1.5 rounded-full bg-line overflow-hidden">
+    <div className="flex items-center gap-2.5 group cursor-default" title={`${used} / ${total} digunakan`}>
+      <svg className="w-3.5 h-3.5 text-ink-secondary/40 group-hover:text-accent transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+      </svg>
+      <div className="w-16 sm:w-28 h-1.5 rounded-full bg-line/60 overflow-hidden">
         <div
-          className="h-full rounded-full transition-all duration-500 ease-out"
+          className="h-full rounded-full transition-all duration-1000 ease-out"
           style={{
             width: `${pct}%`,
             background: pct > 80
@@ -217,8 +252,10 @@ function StorageBar({ stats }: { stats: StorageStats | null }) {
           }}
         />
       </div>
-      <span className="whitespace-nowrap">
-        {stats.storageUsedFormatted} / {stats.storageLimitFormatted}
+      <span className="text-[11px] text-ink-secondary/70 group-hover:text-ink-secondary transition-colors whitespace-nowrap tabular-nums">
+        {used}
+        <span className="text-ink-secondary/50 mx-0.5">/</span>
+        {total}
       </span>
     </div>
   )
@@ -238,19 +275,32 @@ function MessageSkeleton() {
 }
 
 function AttachmentCard({ att }: { att: Attachment }) {
-  const icon = getFileIcon(att.contentType)
+  const icon = getFileIcon(att.contentType);
+  const isImage = att.contentType.startsWith('image/');
 
   return (
     <a
       href={att.downloadUrl}
       target="_blank"
       rel="noopener noreferrer"
-      className="group flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-line bg-panel-dark hover:border-accent/40 hover:bg-panel-light transition-all"
+      className="group relative flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-line bg-panel-dark hover:border-accent/40 hover:bg-panel-light transition-all"
     >
-      <span className="text-lg flex-shrink-0">{icon}</span>
+      {isImage ? (
+        <div className="relative w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-panel-light">
+          <img
+            src={att.downloadUrl}
+            alt={att.filename || 'attachment'}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            loading="lazy"
+          />
+          <div className="absolute inset-0 ring-1 ring-inset ring-black/5 dark:ring-white/10 rounded-lg"></div>
+        </div>
+      ) : (
+        <span className="text-lg flex-shrink-0">{icon}</span>
+      )}
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-ink truncate">{att.filename || 'unnamed'}</p>
-        <p className="text-[10px] text-ink-secondary mt-0.5">{formatBytes(att.size)}</p>
+        <p className="text-[10px] text-ink-secondary mt-0.5">{formatBytes(att.size)}{isImage ? ' · Gambar' : ''}</p>
       </div>
       <svg className="w-4 h-4 text-ink-secondary/40 group-hover:text-accent transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -305,30 +355,32 @@ function EmailDetail({
           </h2>
 
           <div className="space-y-2 text-sm">
-            <div className="flex items-start gap-2">
-              <span className="text-ink-secondary w-14 flex-shrink-0 text-xs font-medium uppercase tracking-wider">Dari</span>
-              <div>
-                <span className="text-ink font-medium">{extractName(email.from)}</span>
-                <span className="text-ink-secondary ml-1 text-xs">&lt;{email.from.replace(/^"?(.+?)"?\s*</, '').replace(/>$/, '') || email.from}&gt;</span>
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-accent/10 flex items-center justify-center text-sm font-semibold text-accent flex-shrink-0 mt-0.5">
+                {(extractName(email.from) || email.from || '?').charAt(0).toUpperCase()}
               </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-ink-secondary w-14 flex-shrink-0 text-xs font-medium uppercase tracking-wider">Ke</span>
-              <span className="text-ink text-xs">{email.to}</span>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-ink-secondary w-14 flex-shrink-0 text-xs font-medium uppercase tracking-wider">Waktu</span>
-              <span className="text-ink-secondary text-xs">{formatDateFull(email.receivedAt)}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-ink">{extractName(email.from) || email.from}</span>
+                  <span className="text-xs text-ink-secondary truncate">&lt;{email.from.replace(/^.*<(.+)>$/, '$1') || email.from}&gt;</span>
+                </div>
+                <div className="flex items-center gap-3 mt-1 text-xs text-ink-secondary">
+                  <span>kepada {email.to}</span>
+                  <span className="text-ink-secondary/50">·</span>
+                  <span>{formatDateFull(email.receivedAt)}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-
-        {/* Attachments */}
         {hasAttachments && (
-          <div className="px-5 pb-4">
-            <div className="flex items-center gap-2 mb-2.5">
+          <div className="px-5 pb-3">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-3.5 h-3.5 text-ink-secondary/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+              </svg>
               <span className="text-xs font-medium text-ink-secondary uppercase tracking-wider">Lampiran</span>
-              <span className="text-[10px] text-ink-secondary/60">({email.attachments.length})</span>
+              <span className="text-[10px] text-ink-secondary/60 bg-panel-dark px-1.5 py-0.5 rounded-md">{email.attachments.length}</span>
             </div>
             <div className="flex flex-wrap gap-2">
               {email.attachments.map((att) => (
@@ -340,7 +392,13 @@ function EmailDetail({
 
         {/* Separator */}
         <div className="px-5 pb-1">
-          <div className="border-t border-line" />
+          <div className="flex items-center gap-3">
+            <div className="flex-1 border-t border-line" />
+            <svg className="w-3 h-3 text-ink-secondary/30 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6h16.5" />
+            </svg>
+            <div className="flex-1 border-t border-line" />
+          </div>
         </div>
 
         {/* Email Body */}
@@ -348,16 +406,14 @@ function EmailDetail({
           {email.html ? (
             <div
               className="email-content text-sm"
-              dangerouslySetInnerHTML={{ __html: email.html }}
+              dangerouslySetInnerHTML={{ __html: renderEmailHtml(email) }}
             />
           ) : (
-            <pre className="text-sm whitespace-pre-wrap font-sans text-ink leading-relaxed">
-              {email.text || 'Tidak ada konten'}
-            </pre>
+            <pre className="text-sm whitespace-pre-wrap font-sans text-ink leading-relaxed">{email.text || 'Tidak ada konten'}</pre>
           )}
-        </div>
       </div>
-    </div>
+      </div>
+      </div>
   )
 }
 
@@ -414,42 +470,50 @@ function MobileMessageList({ messages, selectedId, onSelect, loading }: {
         ) : messages.length === 0 ? (
           <EmptyState />
         ) : (
-          messages.map((msg) => (
+          messages.map((msg, idx) => (
             <button
               key={msg.id}
               onClick={() => onSelect(msg.id)}
-              className={`message-item w-full text-left px-4 py-3.5 transition-colors ${
+              className={`message-item w-full text-left px-4 py-3 transition-colors animate-fade-in ${
                 selectedId === msg.id ? 'active' : ''
               }`}
+              style={{ animationDelay: `${idx * 30}ms` }}
             >
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <span className="text-sm font-medium text-ink truncate">
-                  {extractName(msg.from) || msg.from}
-                </span>
-                <span className="text-[10px] text-ink-secondary whitespace-nowrap flex-shrink-0 mt-0.5">
-                  {formatRelativeTime(msg.receivedAt)}
-                </span>
-              </div>
-              <p className="text-sm text-ink font-semibold truncate mb-0.5">
-                {msg.subject || '(Tanpa subjek)'}
-              </p>
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-ink-secondary truncate flex-1">
-                  {msg.snippet || '...'}
-                </p>
-                {msg.attachments && msg.attachments.length > 0 && (
-                  <span className="badge-attachment flex-shrink-0">
-                    📎 {msg.attachments.length}
-                  </span>
-                )}
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-accent/8 flex items-center justify-center text-xs font-semibold text-accent flex-shrink-0 mt-0.5">
+                  {(extractName(msg.from) || msg.from || '?').charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2 mb-0.5">
+                    <span className="text-sm font-medium text-ink truncate">
+                      {extractName(msg.from) || msg.from}
+                    </span>
+                    <span className="text-[10px] text-ink-secondary whitespace-nowrap flex-shrink-0 mt-0.5">
+                      {formatRelativeTime(msg.receivedAt)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-ink font-semibold truncate mb-0.5">
+                    {msg.subject || '(Tanpa subjek)'}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-ink-secondary truncate flex-1">
+                      {msg.snippet || '...'}
+                    </p>
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <span className="badge-attachment flex-shrink-0">
+                        📎 {msg.attachments.length}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </button>
           ))
-        )}
+          )}
+        </div>
       </div>
-    </div>
-  )
-}
+    );
+  }
 
 // ─── API ──────────────────────────────────────────
 
@@ -465,12 +529,27 @@ async function callApi(path: string, method: string = 'GET', body?: any): Promis
   })
 
   if (!res.ok) throw new Error(`API error: ${res.status}`)
-  return res.json()
+
+  const execution = await res.json()
+  if (execution.status !== 'completed') {
+    throw new Error(`Function execution failed: ${execution.status}`)
+  }
+
+  if (execution.responseStatusCode < 200 || execution.responseStatusCode >= 300) {
+    try {
+      const parsed = JSON.parse(execution.responseBody)
+      throw new Error(parsed.error || `API error: ${execution.responseStatusCode}`)
+    } catch (e: any) {
+      throw e
+    }
+  }
+
+  return JSON.parse(execution.responseBody)
 }
 
 async function fetchMessages(): Promise<Email[]> {
   try {
-    const result = await callApi('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`)
+    const result = await callApi(`/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`, 'GET')
     if (result?.success && Array.isArray(result.data)) {
       return result.data
     }
@@ -482,7 +561,7 @@ async function fetchMessages(): Promise<Email[]> {
 
 async function fetchStats(): Promise<StorageStats | null> {
   try {
-    const result = await callApi('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`)
+    const result = await callApi(`/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`, 'GET')
     if (result?.success && result.data) {
       return result.data
     }
@@ -591,15 +670,15 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="hidden sm:flex items-center">
-            <StorageBar stats={stats} />
-          </div>
 
           <ThemeToggle />
 
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-panel-dark text-xs text-ink-secondary">
-            <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-            <span>Live</span>
+          <div className="flex items-center gap-2.5">
+            <StorageBar stats={stats} />
+            <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-panel-dark text-[11px] text-ink-secondary">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+              <span>{messages.length}</span>
+            </span>
           </div>
         </header>
 
@@ -609,14 +688,6 @@ export default function Home() {
           <div className={`w-full md:w-[380px] lg:w-[420px] flex-shrink-0 border-r border-line bg-panel-light/50 flex flex-col ${
             isMobileDetailOpen ? 'hidden md:flex' : 'flex'
           }`}>
-            {/* Messages count */}
-            {!loading && messages.length > 0 && (
-              <div className="flex-shrink-0 px-4 py-2.5 border-b border-line">
-                <p className="text-xs font-medium text-ink-secondary">
-                  {messages.length} pesan
-                </p>
-              </div>
-            )}
 
             {/* Mobile list */}
             <MobileMessageList
