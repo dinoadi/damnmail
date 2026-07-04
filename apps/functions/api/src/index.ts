@@ -102,7 +102,7 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
     const result = await databases.listDocuments(DB_ID, COLL_EMAILS, [
       Query.equal('inboxAddress', addressLookup),
       Query.orderDesc('$createdAt'),
-      Query.limit(50),
+      Query.limit(200),
     ]);
 
     const messages = result.documents.map((d: any) => {

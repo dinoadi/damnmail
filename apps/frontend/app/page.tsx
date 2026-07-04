@@ -1,387 +1,675 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { startPolling } from './lib/api'
-import type { EmailViewModel, StorageStats } from './types'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import Image from 'next/image'
 
-const PASSWORD = 'ZHAMBALA99'
-const AUTH_KEY = 'damnmail-auth'
-const THEME_KEY = 'damnmail-theme'
 const INBOX_ADDRESS = 'all@readyonbooking.app'
+const POLL_INTERVAL = 5000
+const STATS_INTERVAL = 30000
 
-// ─── Helpers ────────────────────────────────────────
+// ─── Types ────────────────────────────────────────
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'now'
-  if (mins < 60) return `${mins}m`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h`
-  const days = Math.floor(hrs / 24)
-  return `${days}d`
+interface Attachment {
+  id: string
+  filename: string
+  contentType: string
+  size: number
+  downloadUrl: string
 }
 
-function senderInitial(from: string): string {
-  const match = from.match(/^"?([A-Za-z])/)
-  return match ? match[1].toUpperCase() : '#'
+interface Email {
+  id: string
+  inboxAddress: string
+  from: string
+  to: string
+  subject: string
+  html?: string
+  text?: string
+  snippet: string
+  receivedAt: string
+  attachments: Attachment[]
 }
 
-function senderName(from: string): string {
-  const match = from.match(/^"?([^"<]+)"?\s*</)
+interface StorageStats {
+  inboxAddress: string
+  totalEmails: number
+  totalAttachments: number
+  storageUsedBytes: number
+  storageLimit: number
+  storageUsedFormatted: string
+  storageLimitFormatted: string
+  usagePercent: number
+}
+
+// ─── Helpers ──────────────────────────────────────
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const val = bytes / Math.pow(1024, i)
+  return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`
+}
+
+function formatRelativeTime(dateStr: string): string {
+  try {
+    const date = new Date(dateStr)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+
+    if (diffMins < 1) return 'Baru saja'
+    if (diffMins < 60) return `${diffMins}m`
+    if (diffHours < 24) return `${diffHours}j`
+    if (diffDays < 7) return `${diffDays}h`
+    return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })
+  } catch {
+    return dateStr
+  }
+}
+
+function formatDateFull(dateStr: string): string {
+  try {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return dateStr
+  }
+}
+
+function getFileIcon(contentType: string): string {
+  if (!contentType) return '📎'
+  if (contentType.startsWith('image/')) return '🖼️'
+  if (contentType.startsWith('video/')) return '🎬'
+  if (contentType.startsWith('audio/')) return '🎵'
+  if (contentType.includes('pdf')) return '📄'
+  if (contentType.includes('zip') || contentType.includes('rar') || contentType.includes('tar')) return '📦'
+  if (contentType.includes('word') || contentType.includes('document')) return '📝'
+  if (contentType.includes('sheet') || contentType.includes('excel') || contentType.includes('spreadsheet')) return '📊'
+  return '📎'
+}
+
+function extractName(email: string): string {
+  const match = email.match(/^"?(.+?)"?\s*<(.+@.+)>$/)
   if (match) return match[1].trim()
-  const emailMatch = from.match(/([^@]+)@/)
-  if (emailMatch) return emailMatch[1]
-  return from
+  return email
 }
 
-function senderColor(from: string): string {
-  let hash = 0
-  for (let i = 0; i < from.length; i++) {
-    hash = from.charCodeAt(i) + ((hash << 5) - hash)
+function copyToClipboard(text: string) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text)
   }
-  const colors = [
-    'bg-blue-500', 'bg-emerald-500', 'bg-violet-500', 'bg-amber-500',
-    'bg-rose-500', 'bg-cyan-500', 'bg-fuchsia-500', 'bg-lime-500'
-  ]
-  return colors[Math.abs(hash) % colors.length]
 }
 
-// ─── Icons ──────────────────────────────────────────
-
-function SunIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="5" />
-      <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
-      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-      <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
-      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-    </svg>
-  )
-}
-
-function MoonIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  )
-}
-
-function InboxIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-    </svg>
-  )
-}
-
-function MailIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <polyline points="22,7 12,13 2,7" />
-    </svg>
-  )
-}
-
-function LockIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </svg>
-  )
-}
-
-function ArrowLeftIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
-    </svg>
-  )
-}
-
-function HardDriveIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <path d="M2 14h20" /><line x1="6" y1="18" x2="8" y2="18" />
-    </svg>
-  )
-}
-
-// ─── Storage Bar ────────────────────────────────────
-
-function StorageBar({ stats }: { stats: StorageStats }) {
-  const pct = Math.min(stats.usagePercent, 100)
-  const barColor = pct > 90 ? 'bg-danger' : pct > 70 ? 'bg-warning' : 'bg-accent'
-  return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-panel-dark text-xs text-ink-secondary">
-      <HardDriveIcon />
-      <span className="font-mono">
-        {stats.totalEmails} emails &middot; {stats.storageUsedFormatted} / {stats.storageLimitFormatted}
-      </span>
-      <div className="flex-1 h-1.5 rounded-full bg-line overflow-hidden max-w-[60px]">
-        <div className={`h-full rounded-full ${barColor} transition-all`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  )
-}
-
-// ─── Theme Toggle ───────────────────────────────────
-
-function ThemeToggle() {
-  const [dark, setDark] = useState(false)
-
-  useEffect(() => {
-    setDark(document.documentElement.classList.contains('dark'))
-  }, [])
-
-  const toggle = () => {
-    const next = !dark
-    setDark(next)
-    document.documentElement.classList.toggle('dark', next)
-    localStorage.setItem(THEME_KEY, next ? 'dark' : 'light')
-  }
-
-  return (
-    <button
-      onClick={toggle}
-      className="flex items-center justify-center w-8 h-8 rounded-lg bg-panel-dark hover:bg-line transition-colors"
-      aria-label="Toggle theme"
-    >
-      {dark ? <SunIcon className="text-ink" /> : <MoonIcon className="text-ink-secondary" />}
-    </button>
-  )
-}
-
-// ─── Password Gate ──────────────────────────────────
+// ─── Components ───────────────────────────────────
 
 function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
-  const [value, setValue] = useState('')
+  const [input, setInput] = useState('')
   const [error, setError] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const ref = useRef<HTMLInputElement>(null)
 
-  const submit = (e: React.FormEvent) => {
+  useEffect(() => { ref.current?.focus() }, [])
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (value === PASSWORD) {
-      sessionStorage.setItem(AUTH_KEY, '1')
+    if (input.trim() === 'ZHAMBALA99') {
       onUnlock()
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('damnmail_unlocked', 'true')
+      }
     } else {
       setError(true)
-      setValue('')
-      inputRef.current?.focus()
+      setTimeout(() => setError(false), 2000)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="absolute top-4 right-4"><ThemeToggle /></div>
-      <form onSubmit={submit} className="w-full max-w-sm p-8 rounded-xl bg-panel-light border border-line shadow-card">
-        <div className="flex flex-col items-center gap-3 mb-6">
-          <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center text-white">
-            <LockIcon />
-          </div>
-          <h1 className="text-lg font-semibold">DamnMail</h1>
-          <p className="text-xs text-ink-secondary">*@readyonbooking.app</p>
+    <div className="fixed inset-0 flex items-center justify-center bg-canvas z-50">
+      <form
+        onSubmit={handleSubmit}
+        className="animate-fade-in flex flex-col items-center gap-6 px-8 py-12 rounded-2xl bg-panel-light shadow-elevated border border-line max-w-sm w-full mx-4"
+      >
+        <div className="w-14 h-14 rounded-2xl bg-accent/10 flex items-center justify-center text-2xl">
+          ✉️
+        </div>
+        <div className="text-center">
+          <h1 className="text-xl font-bold text-ink">DamnMail</h1>
+          <p className="text-sm text-ink-secondary mt-1">Masukkan password untuk melanjutkan</p>
         </div>
         <input
-          ref={inputRef}
+          ref={ref}
           type="password"
-          value={value}
-          onChange={e => { setValue(e.target.value); setError(false) }}
+          value={input}
+          onChange={e => setInput(e.target.value)}
           placeholder="Password"
-          autoFocus
-          className="w-full px-4 py-2.5 rounded-lg bg-canvas border border-line placeholder:text-ink-secondary/50 focus:border-accent outline-none text-sm transition-colors"
+          className={`w-full px-4 py-2.5 rounded-xl border text-sm bg-panel-light text-ink placeholder-ink-secondary/50 outline-none transition-colors ${
+            error ? 'border-danger ring-2 ring-danger/20' : 'border-line focus:border-accent focus:ring-2 focus:ring-accent/20'
+          }`}
         />
-        {error && <p className="text-xs text-danger mt-2 pl-1">Wrong password</p>}
-        <button type="submit" className="w-full mt-3 py-2.5 rounded-lg bg-accent hover:bg-accent-dark text-white text-sm font-medium transition-colors">
-          Unlock
+        {error && <p className="text-xs text-danger -mt-3">Password salah</p>}
+        <button
+          type="submit"
+          className="w-full py-2.5 rounded-xl bg-accent text-white text-sm font-semibold hover:bg-accent-dark active:scale-[0.98] transition-all"
+        >
+          Masuk
         </button>
       </form>
     </div>
   )
 }
 
-// ─── Email Detail ───────────────────────────────────
+function ThemeToggle() {
+  const [dark, setDark] = useState(false)
 
-function EmailDetail({ email, onBack }: { email: EmailViewModel; onBack: () => void }) {
+  useEffect(() => {
+    const stored = localStorage.getItem('theme')
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    const isDark = stored ? stored === 'dark' : prefersDark
+    setDark(isDark)
+    document.documentElement.classList.toggle('dark', isDark)
+  }, [])
+
+  const toggle = () => {
+    const next = !dark
+    setDark(next)
+    document.documentElement.classList.toggle('dark', next)
+    localStorage.setItem('theme', next ? 'dark' : 'light')
+  }
+
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-4 lg:px-6 py-3 border-b border-line bg-panel-light">
-        <button onClick={onBack} className="lg:hidden p-1.5 rounded-lg hover:bg-panel-dark transition-colors">
-          <ArrowLeftIcon />
-        </button>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold truncate">{email.subject || '(no subject)'}</h2>
-          <p className="text-xs text-ink-secondary truncate">{email.from}</p>
-        </div>
-        <span className="text-xs text-ink-secondary flex-shrink-0">
-          {new Date(email.receivedAt).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-        </span>
+    <button
+      onClick={toggle}
+      className="w-9 h-9 rounded-xl bg-panel-dark hover:bg-line flex items-center justify-center transition-colors text-lg"
+      aria-label="Toggle theme"
+    >
+      {dark ? '☀️' : '🌙'}
+    </button>
+  )
+}
+
+function StorageBar({ stats }: { stats: StorageStats | null }) {
+  if (!stats) return null
+  const pct = Math.min(stats.usagePercent, 100)
+
+  return (
+    <div className="flex items-center gap-2.5 text-xs text-ink-secondary">
+      <div className="w-28 h-1.5 rounded-full bg-line overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500 ease-out"
+          style={{
+            width: `${pct}%`,
+            background: pct > 80
+              ? 'rgb(var(--danger))'
+              : pct > 60
+              ? 'rgb(var(--warning))'
+              : 'rgb(var(--accent))',
+          }}
+        />
       </div>
-      <div className="flex-1 overflow-y-auto p-4 lg:p-6">
-        <div className="flex items-center gap-3 mb-5 p-3 rounded-lg bg-panel-dark">
-          <div className={`w-10 h-10 rounded-full ${senderColor(email.from)} flex items-center justify-center text-white text-sm font-medium flex-shrink-0`}>
-            {senderInitial(email.from)}
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium">{senderName(email.from)}</p>
-            <p className="text-xs text-ink-secondary truncate">to {email.to || INBOX_ADDRESS}</p>
+      <span className="whitespace-nowrap">
+        {stats.storageUsedFormatted} / {stats.storageLimitFormatted}
+      </span>
+    </div>
+  )
+}
+
+function MessageSkeleton() {
+  return (
+    <div className="px-4 py-3.5 flex flex-col gap-2 border-b border-line">
+      <div className="flex items-center gap-2">
+        <div className="skeleton h-4 w-32 rounded-md" />
+        <div className="skeleton h-3 w-12 rounded-md ml-auto" />
+      </div>
+      <div className="skeleton h-5 w-48 rounded-md" />
+      <div className="skeleton h-3 w-64 rounded-md" />
+    </div>
+  )
+}
+
+function AttachmentCard({ att }: { att: Attachment }) {
+  const icon = getFileIcon(att.contentType)
+
+  return (
+    <a
+      href={att.downloadUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-line bg-panel-dark hover:border-accent/40 hover:bg-panel-light transition-all"
+    >
+      <span className="text-lg flex-shrink-0">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-ink truncate">{att.filename || 'unnamed'}</p>
+        <p className="text-[10px] text-ink-secondary mt-0.5">{formatBytes(att.size)}</p>
+      </div>
+      <svg className="w-4 h-4 text-ink-secondary/40 group-hover:text-accent transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+    </a>
+  )
+}
+
+function EmailDetail({
+  email,
+  onClose,
+}: {
+  email: Email
+  onClose: () => void
+}) {
+  const hasAttachments = email.attachments && email.attachments.length > 0
+
+  return (
+    <div className="animate-slide-in h-full flex flex-col bg-panel-light border-l border-line">
+      {/* Close button for mobile */}
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-line md:hidden">
+        <button
+          onClick={onClose}
+          className="p-1.5 -ml-1.5 rounded-lg hover:bg-panel-dark transition-colors text-ink-secondary"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <span className="text-sm font-medium text-ink-secondary">Detail Email</span>
+      </div>
+
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Email Header */}
+        <div className="px-5 pt-5 pb-4 space-y-3">
+          <h2 className="text-lg font-semibold text-ink leading-snug">
+            {email.subject || '(Tanpa subjek)'}
+          </h2>
+
+          <div className="space-y-2 text-sm">
+            <div className="flex items-start gap-2">
+              <span className="text-ink-secondary w-14 flex-shrink-0 text-xs font-medium uppercase tracking-wider">Dari</span>
+              <div>
+                <span className="text-ink font-medium">{extractName(email.from)}</span>
+                <span className="text-ink-secondary ml-1 text-xs">&lt;{email.from.replace(/^"?(.+?)"?\s*</, '').replace(/>$/, '') || email.from}&gt;</span>
+              </div>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-ink-secondary w-14 flex-shrink-0 text-xs font-medium uppercase tracking-wider">Ke</span>
+              <span className="text-ink text-xs">{email.to}</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-ink-secondary w-14 flex-shrink-0 text-xs font-medium uppercase tracking-wider">Waktu</span>
+              <span className="text-ink-secondary text-xs">{formatDateFull(email.receivedAt)}</span>
+            </div>
           </div>
         </div>
-        {email.html ? (
-          <div className="email-content text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: email.html }} />
-        ) : (
-          <pre className="text-sm whitespace-pre-wrap font-sans text-ink leading-relaxed">{email.text || 'No content'}</pre>
-        )}
-        {email.attachments && email.attachments.length > 0 && (
-          <div className="mt-6 pt-4 border-t border-line">
-            <p className="text-xs font-medium text-ink-secondary mb-2">{email.attachments.length} attachment{email.attachments.length > 1 ? 's' : ''}</p>
+
+        {/* Attachments */}
+        {hasAttachments && (
+          <div className="px-5 pb-4">
+            <div className="flex items-center gap-2 mb-2.5">
+              <span className="text-xs font-medium text-ink-secondary uppercase tracking-wider">Lampiran</span>
+              <span className="text-[10px] text-ink-secondary/60">({email.attachments.length})</span>
+            </div>
             <div className="flex flex-wrap gap-2">
-              {email.attachments.map(att => (
-                <a key={att.id} href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-lg bg-panel-dark border border-line hover:border-accent transition-colors truncate max-w-[200px]">
-                  {att.filename}
-                </a>
+              {email.attachments.map((att) => (
+                <AttachmentCard key={att.id} att={att} />
               ))}
             </div>
           </div>
+        )}
+
+        {/* Separator */}
+        <div className="px-5 pb-1">
+          <div className="border-t border-line" />
+        </div>
+
+        {/* Email Body */}
+        <div className="px-5 pb-8">
+          {email.html ? (
+            <div
+              className="email-content text-sm"
+              dangerouslySetInnerHTML={{ __html: email.html }}
+            />
+          ) : (
+            <pre className="text-sm whitespace-pre-wrap font-sans text-ink leading-relaxed">
+              {email.text || 'Tidak ada konten'}
+            </pre>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EmptyState() {
+  return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="text-center px-6 py-12 animate-fade-in">
+        <div className="w-16 h-16 rounded-2xl bg-accent/5 flex items-center justify-center text-3xl mx-auto mb-4">
+          📭
+        </div>
+        <h3 className="text-lg font-semibold text-ink mb-1">Inbox Kosong</h3>
+        <p className="text-sm text-ink-secondary max-w-xs mx-auto">
+          Belum ada email yang masuk ke <span className="font-medium text-ink">{INBOX_ADDRESS}</span>
+        </p>
+        <p className="text-xs text-ink-secondary/60 mt-3">
+          Email yang masuk akan muncul secara otomatis
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function NoEmailSelected() {
+  return (
+    <div className="hidden md:flex flex-1 items-center justify-center bg-panel-light border-l border-line">
+      <div className="text-center px-6 animate-fade-in">
+        <div className="w-16 h-16 rounded-2xl bg-accent/5 flex items-center justify-center text-3xl mx-auto mb-4">
+          💬
+        </div>
+        <h3 className="text-base font-semibold text-ink">Pilih Email</h3>
+        <p className="text-sm text-ink-secondary mt-1">Klik email di samping untuk membaca</p>
+      </div>
+    </div>
+  )
+}
+
+function MobileMessageList({ messages, selectedId, onSelect, loading }: {
+  messages: Email[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  loading: boolean
+}) {
+  return (
+    <div className="md:hidden h-full flex flex-col">
+      <div className="flex-1 overflow-y-auto divide-y divide-line">
+        {loading && messages.length === 0 ? (
+          <>
+            <MessageSkeleton />
+            <MessageSkeleton />
+            <MessageSkeleton />
+            <MessageSkeleton />
+            <MessageSkeleton />
+          </>
+        ) : messages.length === 0 ? (
+          <EmptyState />
+        ) : (
+          messages.map((msg) => (
+            <button
+              key={msg.id}
+              onClick={() => onSelect(msg.id)}
+              className={`message-item w-full text-left px-4 py-3.5 transition-colors ${
+                selectedId === msg.id ? 'active' : ''
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <span className="text-sm font-medium text-ink truncate">
+                  {extractName(msg.from) || msg.from}
+                </span>
+                <span className="text-[10px] text-ink-secondary whitespace-nowrap flex-shrink-0 mt-0.5">
+                  {formatRelativeTime(msg.receivedAt)}
+                </span>
+              </div>
+              <p className="text-sm text-ink font-semibold truncate mb-0.5">
+                {msg.subject || '(Tanpa subjek)'}
+              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-ink-secondary truncate flex-1">
+                  {msg.snippet || '...'}
+                </p>
+                {msg.attachments && msg.attachments.length > 0 && (
+                  <span className="badge-attachment flex-shrink-0">
+                    📎 {msg.attachments.length}
+                  </span>
+                )}
+              </div>
+            </button>
+          ))
         )}
       </div>
     </div>
   )
 }
 
-// ─── Main App ───────────────────────────────────────
+// ─── API ──────────────────────────────────────────
+
+async function callApi(path: string, method: string = 'GET', body?: any): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/proxy'
+  const payload: any = { method, path }
+  if (body) payload.body = body
+
+  const res = await fetch(baseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+async function fetchMessages(): Promise<Email[]> {
+  try {
+    const result = await callApi('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`)
+    if (result?.success && Array.isArray(result.data)) {
+      return result.data
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
+async function fetchStats(): Promise<StorageStats | null> {
+  try {
+    const result = await callApi('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`)
+    if (result?.success && result.data) {
+      return result.data
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// ─── Main Page ────────────────────────────────────
 
 export default function Home() {
-  const [isUnlocked, setIsUnlocked] = useState(false)
-  const [messages, setMessages] = useState<EmailViewModel[]>([])
+  const [locked, setLocked] = useState(true)
+  const [messages, setMessages] = useState<Email[]>([])
+  const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [messageCount, setMessageCount] = useState(0)
   const [stats, setStats] = useState<StorageStats | null>(null)
+  const [copied, setCopied] = useState(false)
+  const selectedEmail = messages.find((m) => m.id === selectedId) || null
 
-  const selectedEmail = messages.find(m => m.id === selectedId) ?? null
-
-  const fetchStats = async () => {
-    try {
-      const { callFunction } = await import('./lib/api')
-      const res = await callFunction('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`)
-      if (res.success && res.data) setStats(res.data)
-    } catch {}
-  }
-
+  // Unlock check
   useEffect(() => {
-    if (sessionStorage.getItem(AUTH_KEY) === '1') setIsUnlocked(true)
+    if (typeof window !== 'undefined' && localStorage.getItem('damnmail_unlocked') === 'true') {
+      setLocked(false)
+    }
   }, [])
 
+  // Poll messages
   useEffect(() => {
-    if (!isUnlocked) return
-    const stop = startPolling(
-      `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`,
-      (data: EmailViewModel[]) => {
-        setMessages(data)
-        setMessageCount(data.length)
-        setIsLoading(false)
-      },
-      () => { setIsLoading(false) },
-      5000
-    )
-    fetchStats()
-    const statsInterval = setInterval(fetchStats, 30000)
-    return () => { stop(); clearInterval(statsInterval) }
-  }, [isUnlocked])
+    if (locked) return
 
-  if (!isUnlocked) return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
+    const poll = async () => {
+      const data = await fetchMessages()
+      setMessages(data)
+      setLoading(false)
+    }
+
+    poll()
+    const interval = setInterval(poll, POLL_INTERVAL)
+    return () => clearInterval(interval)
+  }, [locked])
+
+  // Poll stats
+  useEffect(() => {
+    if (locked) return
+
+    const poll = async () => {
+      const data = await fetchStats()
+      setStats(data)
+    }
+
+    poll()
+    const interval = setInterval(poll, STATS_INTERVAL)
+    return () => clearInterval(interval)
+  }, [locked])
+
+  const handleUnlock = useCallback(() => {
+    setLocked(false)
+  }, [])
+
+  const handleSelectMessage = useCallback((id: string) => {
+    setSelectedId((prev) => (prev === id ? null : id))
+  }, [])
+
+  const handleCloseDetail = useCallback(() => {
+    setSelectedId(null)
+  }, [])
+
+  const handleCopy = async () => {
+    await copyToClipboard(INBOX_ADDRESS)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const isMobileDetailOpen = selectedId !== null
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 lg:px-6 h-14 border-b border-line bg-panel-light flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white">
-            <InboxIcon />
+    <>
+      {locked && <PasswordGate onUnlock={handleUnlock} />}
+
+      <div className="h-screen flex flex-col bg-canvas">
+        {/* ─── Header ────────────────────────── */}
+        <header className="flex-shrink-0 flex items-center gap-3 px-4 md:px-6 py-3 bg-panel-light/80 backdrop-blur-lg border-b border-line sticky top-0 z-20">
+          <div className="flex items-center gap-2.5 mr-2">
+            <div className="w-8 h-8 rounded-xl bg-accent flex items-center justify-center text-white text-sm font-bold">
+              D
+            </div>
+            <h1 className="text-base font-bold text-ink hidden sm:block">DamnMail</h1>
           </div>
-          <div>
-            <h1 className="text-sm font-semibold leading-tight">DamnMail</h1>
-            <p className="text-[11px] text-ink-secondary font-mono">{INBOX_ADDRESS}</p>
+
+          <div className="flex-1 min-w-0">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-panel-dark hover:bg-line transition-colors text-xs font-mono text-ink-secondary truncate max-w-[240px]"
+              title="Klik untuk copy"
+            >
+              <span className="truncate">{INBOX_ADDRESS}</span>
+              {copied ? (
+                <span className="text-accent font-medium flex-shrink-0">Tersalin!</span>
+              ) : (
+                <svg className="w-3.5 h-3.5 flex-shrink-0 text-ink-secondary/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+              )}
+            </button>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {stats && <StorageBar stats={stats} />}
-          <div className="flex items-center gap-1 text-xs text-ink-secondary bg-panel-dark px-2.5 py-1.5 rounded-lg font-mono">
-            <MailIcon className="mr-1" />
-            {messageCount}
+
+          <div className="hidden sm:flex items-center">
+            <StorageBar stats={stats} />
           </div>
+
           <ThemeToggle />
-          <button
-            onClick={() => { sessionStorage.removeItem(AUTH_KEY); window.location.reload() }}
-            className="px-2.5 py-1.5 rounded-lg text-xs text-ink-secondary hover:text-danger hover:bg-danger/10 transition-colors"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
 
-      {/* Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Message List */}
-        <div className={`${selectedEmail ? 'hidden lg:flex' : 'flex'} w-full lg:w-80 xl:w-96 flex-shrink-0 border-r border-line bg-panel-light flex-col overflow-y-auto`}>
-          {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-ink-secondary">
-              <div className="w-5 h-5 border-2 border-ink-secondary/30 border-t-accent rounded-full animate-spin mb-3" />
-              <p className="text-sm">Loading...</p>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-ink-secondary">
-              <InboxIcon className="mb-3 w-8 h-8" />
-              <p className="text-sm font-medium">Inbox kosong</p>
-              <p className="text-xs mt-1">Kirim email ke *@readyonbooking.app</p>
-            </div>
-          ) : (
-            <div>
-              {messages.map(email => (
-                <button
-                  key={email.id}
-                  onClick={() => setSelectedId(email.id)}
-                  className={`w-full text-left px-4 py-3 flex gap-3 border-b border-line transition-colors ${
-                    selectedId === email.id
-                      ? 'bg-accent-light'
-                      : 'hover:bg-panel-dark'
-                  }`}
-                >
-                  <div className={`w-9 h-9 rounded-full ${senderColor(email.from)} flex-shrink-0 flex items-center justify-center text-white text-xs font-medium`}>
-                    {senderInitial(email.from)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium truncate">{senderName(email.from)}</span>
-                      <span className="text-[11px] text-ink-secondary flex-shrink-0">{relativeTime(email.receivedAt)}</span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-panel-dark text-xs text-ink-secondary">
+            <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+            <span>Live</span>
+          </div>
+        </header>
+
+        {/* ─── Main Content ──────────────────── */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Message List - hidden on mobile when detail is open */}
+          <div className={`w-full md:w-[380px] lg:w-[420px] flex-shrink-0 border-r border-line bg-panel-light/50 flex flex-col ${
+            isMobileDetailOpen ? 'hidden md:flex' : 'flex'
+          }`}>
+            {/* Messages count */}
+            {!loading && messages.length > 0 && (
+              <div className="flex-shrink-0 px-4 py-2.5 border-b border-line">
+                <p className="text-xs font-medium text-ink-secondary">
+                  {messages.length} pesan
+                </p>
+              </div>
+            )}
+
+            {/* Mobile list */}
+            <MobileMessageList
+              messages={messages}
+              selectedId={selectedId}
+              onSelect={handleSelectMessage}
+              loading={loading}
+            />
+
+            {/* Desktop list */}
+            <div className="hidden md:flex flex-1 flex-col overflow-y-auto divide-y divide-line">
+              {loading && messages.length === 0 ? (
+                <>
+                  <MessageSkeleton />
+                  <MessageSkeleton />
+                  <MessageSkeleton />
+                  <MessageSkeleton />
+                  <MessageSkeleton />
+                  <MessageSkeleton />
+                </>
+              ) : messages.length === 0 ? (
+                <EmptyState />
+              ) : (
+                messages.map((msg) => (
+                  <button
+                    key={msg.id}
+                    onClick={() => handleSelectMessage(msg.id)}
+                    className={`message-item w-full text-left px-4 py-3.5 transition-colors ${
+                      selectedId === msg.id ? 'active' : ''
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <span className="text-sm font-semibold text-ink truncate">
+                        {extractName(msg.from) || msg.from}
+                      </span>
+                      <span className="text-[10px] text-ink-secondary whitespace-nowrap flex-shrink-0 mt-[3px]">
+                        {formatRelativeTime(msg.receivedAt)}
+                      </span>
                     </div>
-                    <p className="text-sm truncate text-ink mt-0.5">{email.subject || '(no subject)'}</p>
-                    {email.snippet && <p className="text-xs truncate text-ink-secondary mt-0.5">{email.snippet}</p>}
-                  </div>
-                </button>
-              ))}
+                    <p className="text-sm text-ink truncate mb-0.5">
+                      {msg.subject || '(Tanpa subjek)'}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-ink-secondary truncate flex-1">
+                        {msg.snippet || '...'}
+                      </p>
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <span className="text-xs text-ink-secondary/60 flex-shrink-0">
+                          📎 {msg.attachments.length}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Detail Panel */}
-        <div className={`${selectedEmail ? 'flex' : 'hidden lg:flex'} flex-1 flex-col bg-panel-light`}>
+          {/* Email Detail / No Selection */}
           {selectedEmail ? (
-            <EmailDetail email={selectedEmail} onBack={() => setSelectedId(null)} />
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-ink-secondary">
-              <InboxIcon className="w-10 h-10 mb-3" />
-              <p className="text-sm">Pilih email untuk dibaca</p>
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <EmailDetail email={selectedEmail} onClose={handleCloseDetail} />
             </div>
+          ) : (
+            <NoEmailSelected />
           )}
         </div>
       </div>
-    </div>
+    </>
   )
 }
