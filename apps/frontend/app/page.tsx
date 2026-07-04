@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Image from 'next/image'
 
+// Dark mode CSS override — injected after email HTML to beat embedded email styles
+const EMAIL_DARK_CSS = '.email-content *:not(img):not(svg):not(video):not(iframe):not(canvas){color:var(--email-color,inherit)!important;background-color:transparent!important}.email-content img{max-width:100%!important;height:auto!important;border-radius:6px}.dark .email-content img{filter:brightness(0.9) contrast(1.15)}'
 const INBOX_ADDRESS = 'all@readyonbooking.app'
 const POLL_INTERVAL = 5000
 const STATS_INTERVAL = 30000
@@ -265,6 +267,19 @@ function EmailDetail({
   onClose: () => void
 }) {
   const hasAttachments = email.attachments && email.attachments.length > 0
+
+  // Inject dark mode style override after email HTML renders
+  useEffect(() => {
+    if (!email?.html) return;
+    const s = document.createElement('style');
+    s.id = 'email-dark-override';
+    s.textContent = EMAIL_DARK_CSS;
+    document.body.appendChild(s);
+    return () => {
+      const el = document.getElementById('email-dark-override');
+      if (el) el.remove();
+    };
+  }, [email?.id]);
 
   return (
     <div className="animate-slide-in h-full flex flex-col bg-panel-light border-l border-line">
