@@ -147,18 +147,39 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
 
 async function handleInboxStats(databases: Databases, storage: Storage, address: string, res: any, error: any) {
   try {
-    // Count emails for this inbox
+    // Count total emails
     const emailResult = await databases.listDocuments(DB_ID, COLL_EMAILS, [
       Query.equal('inboxAddress', address),
       Query.limit(1),
     ]);
 
-    // Count and sum attachment sizes from storage bucket
-    const allFiles = await storage.listFiles(BUCKET_ATTACHMENTS);
-    const totalAttachments = allFiles.total;
-    const storageUsedBytes = allFiles.files.reduce((sum: number, f: any) => sum + (f.sizeOriginal || f.size || 0), 0);
+    // Count attachments from email documents (avoid storage listFiles permission issues)
+    let totalAttachments = 0;
+    let storageUsedBytes = 0;
+    const batchSize = 100;
+    let offset = 0;
+    let hasMore = true;
 
-    const storageLimit = 500 * 1024 * 1024; // 500MB
+    while (hasMore) {
+      const batch = await databases.listDocuments(DB_ID, COLL_EMAILS, [
+        Query.equal('inboxAddress', address),
+        Query.limit(batchSize),
+        Query.offset(offset),
+      ]);
+
+      for (const doc of batch.documents) {
+        const atts = typeof doc.attachments === 'string' ? JSON.parse(doc.attachments) : (doc.attachments || []);
+        totalAttachments += atts.length;
+        for (const att of atts) {
+          storageUsedBytes += att.size || 0;
+        }
+      }
+
+      offset += batch.documents.length;
+      if (batch.documents.length < batchSize) hasMore = false;
+    }
+
+    const storageLimit = 500 * 1024 * 1024;
 
     return res.json({
       success: true,
