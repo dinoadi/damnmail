@@ -99,11 +99,12 @@ async function handleListDomains(databases: Databases, res: any) {
 
 async function handleListMessages(databases: Databases, storage: Storage, addressLookup: string, res: any, error: any) {
   try {
-    const result = await databases.listDocuments(DB_ID, COLL_EMAILS, [
-      Query.equal('inboxAddress', addressLookup),
-      Query.orderDesc('$createdAt'),
-      Query.limit(200),
-    ]);
+    const queries: any[] = [Query.orderDesc('$createdAt'), Query.limit(200)];
+    const username = addressLookup.includes('@') ? addressLookup.split('@')[0] : addressLookup;
+    if (username !== 'all') {
+      queries.unshift(Query.equal('inboxAddress', addressLookup));
+    }
+    const result = await databases.listDocuments(DB_ID, COLL_EMAILS, queries);
 
     const messages = result.documents.map((d: any) => {
       const endpoint = process.env.APPWRITE_ENDPOINT || 'https://sgp.cloud.appwrite.io/v1';
@@ -149,10 +150,12 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
 async function handleInboxStats(databases: Databases, storage: Storage, address: string, res: any, error: any) {
   try {
     // Count total emails
-    const emailResult = await databases.listDocuments(DB_ID, COLL_EMAILS, [
-      Query.equal('inboxAddress', address),
-      Query.limit(1),
-    ]);
+    const queries: any[] = [Query.limit(1)];
+    const username = address.includes('@') ? address.split('@')[0] : address;
+    if (username !== 'all') {
+      queries.unshift(Query.equal('inboxAddress', address));
+    }
+    const emailResult = await databases.listDocuments(DB_ID, COLL_EMAILS, queries);
 
     // Count attachments from email documents (avoid storage listFiles permission issues)
     let totalAttachments = 0;
@@ -162,11 +165,11 @@ async function handleInboxStats(databases: Databases, storage: Storage, address:
     let hasMore = true;
 
     while (hasMore) {
-      const batch = await databases.listDocuments(DB_ID, COLL_EMAILS, [
-        Query.equal('inboxAddress', address),
-        Query.limit(batchSize),
-        Query.offset(offset),
-      ]);
+      const batchQueries: any[] = [Query.limit(batchSize), Query.offset(offset)];
+      if (username !== 'all') {
+        batchQueries.unshift(Query.equal('inboxAddress', address));
+      }
+      const batch = await databases.listDocuments(DB_ID, COLL_EMAILS, batchQueries);
 
       for (const doc of batch.documents) {
         const atts = typeof doc.attachments === 'string' ? JSON.parse(doc.attachments) : (doc.attachments || []);

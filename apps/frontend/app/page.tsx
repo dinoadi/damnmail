@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import Image from 'next/image'
 
 // Dark mode CSS override — injected after email HTML to beat embedded email styles
-const EMAIL_DARK_CSS = '.email-content *:not(img):not(svg):not(video):not(iframe):not(canvas){color:rgb(var(--ink))!important;background-color:transparent!important}.email-content img{max-width:100%!important;height:auto!important;border-radius:6px}.dark .email-content img{filter:brightness(0.9) contrast(1.15)}'
+const EMAIL_DARK_CSS = '.dark .email-content *:not(img):not(svg):not(video):not(iframe):not(canvas){color:rgb(var(--ink))!important;background-color:transparent!important}.email-content img{max-width:100%!important;height:auto!important;border-radius:6px}.dark .email-content img{filter:brightness(0.9) contrast(1.15)}'
 const INBOX_ADDRESS = 'all@readyonbooking.app'
 const POLL_INTERVAL = 5000
 const STATS_INTERVAL = 30000

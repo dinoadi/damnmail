@@ -1,7 +1,8 @@
 [build]
-  command = "npm run build"
+  base = "apps/frontend"
+  command = "pnpm run build"
   publish = "out"
-  functions = "apps/frontend/netlify/functions"
+  functions = "netlify/functions"
 
 [[redirects]]
   from = "/api/webhook/telegram"
