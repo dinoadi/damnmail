@@ -98,6 +98,7 @@ async function handleListDomains(databases: Databases, res: any) {
 // handleCreateInbox not used (we use fixed inbox all@readyonbooking.app)
 
 async function handleListMessages(databases: Databases, storage: Storage, addressLookup: string, res: any, error: any) {
+  try {
     const result = await databases.listDocuments(DB_ID, COLL_EMAILS, [
       Query.equal('inboxAddress', addressLookup),
       Query.orderDesc('$createdAt'),
@@ -149,7 +150,7 @@ async function handleInboxStats(databases: Databases, storage: Storage, address:
     // Count emails for this inbox
     const emailResult = await databases.listDocuments(DB_ID, COLL_EMAILS, [
       Query.equal('inboxAddress', address),
-      Query.limit(0),
+      Query.limit(1),
     ]);
 
     // Count and sum attachment sizes from storage bucket
