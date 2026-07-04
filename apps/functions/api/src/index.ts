@@ -121,6 +121,7 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
         downloadUrl: att.fileId
           ? `${endpoint}/storage/buckets/${BUCKET_ATTACHMENTS}/files/${att.fileId}/view?project=${project}`
           : '',
+        contentId: att.contentId || '',
       }));
 
       const msg: any = {
