@@ -242,9 +242,9 @@ async function handleInboxStats(databases: Databases, storage: Storage, address:
         totalEmails: 0,
         totalAttachments: 0,
         storageUsedBytes: 0,
-        storageLimit: 500 * 1024 * 1024,
+        storageLimit: 1024 * 1024 * 1024,
         storageUsedFormatted: '0 B',
-        storageLimitFormatted: '500 MB',
+        storageLimitFormatted: '1 GB',
         usagePercent: 0,
       },
     });
