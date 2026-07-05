@@ -5,7 +5,8 @@ dist
 coverage
 .env
 .env.local
-pnpm-lock.yaml
+# pnpm-lock.yaml is intentionally tracked and committed
+# pnpm-lock.yaml
 npm-debug.log*
 yarn-error.log*
 
