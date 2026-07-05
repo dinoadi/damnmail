@@ -20,6 +20,24 @@ export default async ({ req, res, log, error }: any) => {
 
     let { path, method } = req;
     let body: Record<string, any> = {};
+    // CORS headers for direct CDN access
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Appwrite-Key, X-Appwrite-Project',
+    };
+
+    // Handle OPTIONS preflight
+    if (method === 'OPTIONS') {
+      return res.send('', 204, corsHeaders);
+    }
+
+    // Intercept res.json to always include CORS headers
+    const originalJson = res.json.bind(res);
+    res.json = (data: any, status = 200, headers: Record<string, string> = {}) => {
+      return originalJson(data, status, { ...corsHeaders, ...headers });
+    };
+
     try { body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.bodyJson || JSON.parse(req.bodyText || '{}')); } catch (e) {}
     // Support execution API mode: when called via API execution (path='/', method='POST'),
     // read routing info from the parsed body
@@ -59,6 +77,12 @@ export default async ({ req, res, log, error }: any) => {
     const statsMatch = path.match(/^\/api\/inboxes\/([^/]+)\/stats$/);
     if (statsMatch && method === 'GET') {
       return await handleInboxStats(databases, storage, decodeURIComponent(statsMatch[1]), res, error);
+    }
+
+    // DELETE /api/messages/:messageId
+    const deleteMatch = path.match(/^\/api\/messages\/([^/]+)$/);
+    if (deleteMatch && method === 'DELETE') {
+      return await handleDeleteMessage(databases, storage, decodeURIComponent(deleteMatch[1]), res, error);
     }
 
     if (path === '/api/admin/domains' && method === 'POST') {
@@ -182,6 +206,12 @@ async function handleInboxStats(databases: Databases, storage: Storage, address:
         for (const att of atts) {
           storageUsedBytes += att.size || 0;
         }
+        // Count email body content size
+        storageUsedBytes += (doc.text || '').length;
+        storageUsedBytes += (doc.html || '').length;
+        storageUsedBytes += (doc.subject || '').length;
+        storageUsedBytes += (doc.from || '').length;
+        storageUsedBytes += (doc.to || '').length;
       }
 
       offset += batch.documents.length;
@@ -220,6 +250,36 @@ async function handleInboxStats(databases: Databases, storage: Storage, address:
     });
   }
 }
+
+async function handleDeleteMessage(databases: Databases, storage: Storage, messageId: string, res: any, error: any) {
+  try {
+    // Get the email to find associated attachments
+    const email = await databases.getDocument(DB_ID, COLL_EMAILS, messageId);
+
+    // Delete attachment files from storage
+    if (email.attachments) {
+      const atts = typeof email.attachments === 'string' ? JSON.parse(email.attachments) : (email.attachments || []);
+      for (const att of atts) {
+        if (att.fileId) {
+          try {
+            await storage.deleteFile(BUCKET_ATTACHMENTS, att.fileId);
+          } catch {
+            // Attachment file might be missing, skip
+          }
+        }
+      }
+    }
+
+    // Delete the document itself
+    await databases.deleteDocument(DB_ID, COLL_EMAILS, messageId);
+
+    return res.json({ success: true, data: { message: 'Email deleted' } });
+  } catch (err: any) {
+    error(`Delete message error: ${err.message}`);
+    return res.json({ success: false, error: 'Failed to delete message' }, 500);
+  }
+}
+
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -364,6 +424,7 @@ async function handleEmailWebhook(databases: Databases, body: any, res: any, err
       html: html || '',
       snippet,
       attachments: '[]',
+      createdAt: new Date().toISOString(),
     });
 
     log(`Email stored: "${subject}" from ${fromAddress} to ${inboxAddress}`);

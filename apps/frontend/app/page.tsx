@@ -347,9 +347,11 @@ function AttachmentCard({ att }: { att: Attachment }) {
 function EmailDetail({
   email,
   onClose,
+  onDelete,
 }: {
   email: Email
   onClose: () => void
+  onDelete?: () => void
 }) {
   const hasAttachments = email.attachments && email.attachments.length > 0
 
@@ -403,6 +405,22 @@ function EmailDetail({
                   <span>kepada {email.to}</span>
                   <span className="text-ink-secondary/50">·</span>
                   <span>{formatDateFull(email.receivedAt)}</span>
+                </div>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Hapus email ini?')) {
+                        onDelete?.()
+                      }
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-red-500/60 hover:text-red-500 hover:bg-red-500/5 transition-colors"
+                    title="Hapus email"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Hapus
+                  </button>
                 </div>
               </div>
             </div>
@@ -596,6 +614,17 @@ async function fetchStats(): Promise<StorageStats | null> {
   }
 }
 
+async function deleteMessage(messageId: string): Promise<boolean> {
+  try {
+    await callApi('DELETE', `/messages/${messageId}`)
+    return true
+  } catch (e) {
+    console.warn('deleteMessage failed:', e)
+    return false
+  }
+}
+
+
 
 // ─── Main Page ────────────────────────────────────
 
@@ -655,6 +684,18 @@ export default function Home() {
   const handleCloseDetail = useCallback(() => {
     setSelectedId(null)
   }, [])
+
+  const handleDeleteMessage = useCallback(async () => {
+    if (!selectedEmail) return
+    const deleted = await deleteMessage(selectedEmail.id)
+    if (deleted) {
+      setMessages((prev) => prev.filter((m) => m.id !== selectedEmail.id))
+      setSelectedId(null)
+      const freshStats = await fetchStats()
+      if (freshStats) setStats(freshStats)
+    }
+  }, [selectedEmail?.id])
+
 
   const handleCopy = async () => {
     await copyToClipboard(INBOX_ADDRESS)
@@ -775,7 +816,7 @@ export default function Home() {
           {/* Email Detail / No Selection */}
           {selectedEmail ? (
             <div className="flex-1 min-w-0 overflow-hidden">
-              <EmailDetail email={selectedEmail} onClose={handleCloseDetail} />
+              <EmailDetail email={selectedEmail} onClose={handleCloseDetail} onDelete={handleDeleteMessage} />
             </div>
           ) : (
             <NoEmailSelected />
