@@ -1,10 +1,14 @@
-const NEXT_PUBLIC_API_BASE_URL = '/api/proxy'
+// API client for Appwrite Function proxy mode.
+// Calls go through: browser -> Netlify proxy -> Appwrite Execution API
+// Response format: ExecutionResponse (wrapped by Appwrite)
 
-interface ExecutionResponse<T> {
+interface ExecutionResponse {
   status: string
   responseStatusCode: number
   responseBody: string
 }
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/proxy'
 
 export async function callFunction<T>(method: string, path: string, body?: string): Promise<T> {
   const payload: Record<string, string> = { method, path }
@@ -12,34 +16,29 @@ export async function callFunction<T>(method: string, path: string, body?: strin
     payload.body = body
   }
 
-  const response = await fetch(NEXT_PUBLIC_API_BASE_URL, {
+  const response = await fetch(API_BASE_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   })
 
   if (!response.ok) {
     throw new Error(`API request failed: ${response.status}`)
   }
 
-  const execution = await response.json() as ExecutionResponse<T>
+  const execution = (await response.json()) as ExecutionResponse
 
   if (execution.status !== 'completed') {
     throw new Error(`Function execution failed: ${execution.status}`)
   }
 
   if (execution.responseStatusCode < 200 || execution.responseStatusCode >= 300) {
-    try {
-      const parsed = JSON.parse(execution.responseBody);
-      throw new Error(parsed.error || `API error: ${execution.responseStatusCode}`);
-    } catch {
-      throw new Error(`API error: ${execution.responseStatusCode}`);
-    }
+    const parsed = JSON.parse(execution.responseBody)
+    throw new Error(parsed.error || `API error: ${execution.responseStatusCode}`)
   }
 
-  // responseBody is a JSON string — parse it to get the actual API response
   return JSON.parse(execution.responseBody) as T
 }
 
@@ -58,7 +57,7 @@ export function startPolling<T>(
   path: string,
   onData: (data: T) => void,
   onError: (error: Error) => void,
-  intervalMs = 4000
+  intervalMs = 4000,
 ): () => void {
   let active = true
 

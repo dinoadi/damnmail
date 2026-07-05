@@ -69,6 +69,11 @@ export default async ({ req, res, log, error }: any) => {
       return await handleHealth(databases, res);
     }
 
+    // POST /api/webhook/email — Cloudflare Email Worker ingress
+    if (path === '/api/webhook/email' && method === 'POST') {
+      return await handleEmailWebhook(databases, body, res, error, log);
+    }
+
     // Fallback 404
     return res.json({ success: false, error: 'Not found' }, 404);
 
@@ -303,5 +308,68 @@ async function handleHealth(databases: Databases, res: any) {
         domains: [],
       },
     });
+  }
+}
+
+// ─── EMAIL WEBHOOK ──────────────────────────────────
+
+async function handleEmailWebhook(databases: Databases, body: any, res: any, error: any, log: any) {
+  const to = body.to || '';
+  const from = body.from || '';
+  const subject = body.subject || '';
+  const text = body.text || '';
+  const html = body.html || '';
+  const raw = body.raw || '';
+
+  if (!to || !from) {
+    return res.json({ success: false, error: 'Missing required fields: to, from' }, 400);
+  }
+
+  // Clean up email addresses (handle "Name <email>" format)
+  const inboxAddress = to.includes('<') ? to.replace(/.*<(.+)>/, '$1').trim() : to.trim().toLowerCase();
+  const fromAddress = from.includes('<') ? from.replace(/.*<(.+)>/, '$1').trim() : from.trim();
+ 
+  const username = inboxAddress.split('@')[0];
+  const domain = inboxAddress.split('@')[1] || '';
+
+  try {
+    // Auto-create inbox if not exists
+    await databases.createDocument(DB_ID, COLL_INBOXES, ID.unique(), {
+      address: inboxAddress,
+      username,
+      domain,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      telegramChatId: '',
+    });
+    log(`Auto-created inbox: ${inboxAddress}`);
+  } catch {
+    // Inbox already exists, that's fine
+  }
+
+  // Generate snippet
+  const snippet = text
+    ? text.substring(0, 200).replace(/\n/g, ' ')
+    : html
+      ? html.replace(/<[^>]*>/g, '').substring(0, 200).replace(/\n/g, ' ')
+      : '';
+
+  try {
+    await databases.createDocument(DB_ID, COLL_EMAILS, ID.unique(), {
+      inboxAddress,
+      from: fromAddress,
+      to: inboxAddress,
+      subject: subject || '(Tanpa subjek)',
+      text: text || '',
+      html: html || '',
+      snippet,
+      attachments: '[]',
+    });
+
+    log(`Email stored: "${subject}" from ${fromAddress} to ${inboxAddress}`);
+    return res.json({ success: true, data: { message: 'Email stored' } });
+  } catch (err: any) {
+    error(`Email storage error: ${err.message}`);
+    return res.json({ success: false, error: 'Failed to store email' }, 500);
   }
 }

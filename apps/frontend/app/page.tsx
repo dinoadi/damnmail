@@ -158,17 +158,40 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-canvas z-50">
+    <div className="fixed inset-0 flex items-center justify-center z-50"
+      style={{
+        background: 'radial-gradient(ellipse at top, #12121e 0%, #0a0a12 50%, #06060e 100%)',
+      }}
+    >
+      <div
+        className="absolute inset-0 overflow-hidden pointer-events-none"
+      >
+        <div className="absolute -top-40 -left-40 w-80 h-80 rounded-full opacity-[0.03]" style={{background: 'radial-gradient(circle, #6060ff 0%, transparent 70%)'}} />
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full opacity-[0.03]" style={{background: 'radial-gradient(circle, #40b0ff 0%, transparent 70%)'}} />
+      </div>
       <form
         onSubmit={handleSubmit}
-        className="animate-fade-in flex flex-col items-center gap-6 px-8 py-12 rounded-2xl bg-panel-light shadow-elevated border border-line max-w-sm w-full mx-4"
+        className="relative animate-fade-in flex flex-col items-center gap-6 px-10 py-14 rounded-3xl mx-4"
+        style={{
+          background: 'linear-gradient(160deg, rgba(22,22,40,0.92) 0%, rgba(14,14,28,0.96) 100%)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: '0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03) inset',
+          maxWidth: '380px',
+          width: '100%',
+        }}
       >
-        <div className="w-14 h-14 rounded-2xl bg-accent/10 flex items-center justify-center text-2xl">
-          ✉️
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
+          style={{
+            background: 'linear-gradient(135deg, rgba(100,120,255,0.18) 0%, rgba(80,200,255,0.08) 100%)',
+            border: '1px solid rgba(100,140,255,0.12)',
+          }}
+        >
+          <span role="img" aria-label="mail">✉️</span>
         </div>
         <div className="text-center">
-          <h1 className="text-xl font-bold text-ink">DamnMail</h1>
-          <p className="text-sm text-ink-secondary mt-1">Masukkan password untuk melanjutkan</p>
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#e8e8f0' }}>DamnMail</h1>
+          <p className="text-sm mt-2 font-light" style={{ color: '#7878a0' }}>Masukkan password untuk melanjutkan</p>
         </div>
         <input
           ref={ref}
@@ -176,14 +199,26 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
           value={input}
           onChange={e => setInput(e.target.value)}
           placeholder="Password"
-          className={`w-full px-4 py-2.5 rounded-xl border text-sm bg-panel-light text-ink placeholder-ink-secondary/50 outline-none transition-colors ${
-            error ? 'border-danger ring-2 ring-danger/20' : 'border-line focus:border-accent focus:ring-2 focus:ring-accent/20'
-          }`}
+          className="w-full px-4 py-3 rounded-2xl text-sm outline-none transition-all duration-200"
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: error ? '1px solid rgba(255,80,80,0.5)' : '1px solid rgba(255,255,255,0.07)',
+            color: '#d0d0e8',
+          }}
+          onFocus={e => { e.target.style.borderColor = 'rgba(100,140,255,0.4)'; e.target.style.background = 'rgba(255,255,255,0.06)' }}
+          onBlur={e => { e.target.style.borderColor = error ? 'rgba(255,80,80,0.5)' : 'rgba(255,255,255,0.07)'; e.target.style.background = 'rgba(255,255,255,0.04)' }}
         />
-        {error && <p className="text-xs text-danger -mt-3">Password salah</p>}
+        {error && <p className="text-xs -mt-3" style={{ color: '#ff6060' }}>Password salah</p>}
         <button
           type="submit"
-          className="w-full py-2.5 rounded-xl bg-accent text-white text-sm font-semibold hover:bg-accent-dark active:scale-[0.98] transition-all"
+          className="w-full py-3 rounded-2xl text-sm font-semibold tracking-wide transition-all duration-200 active:scale-[0.97]"
+          style={{
+            background: 'linear-gradient(135deg, rgba(80,130,255,0.7) 0%, rgba(120,80,255,0.6) 100%)',
+            color: '#e8e8ff',
+            border: '1px solid rgba(100,130,255,0.15)',
+          }}
+          onMouseEnter={e => e.target.style.background = 'linear-gradient(135deg, rgba(100,150,255,0.8) 0%, rgba(140,100,255,0.7) 100%)'}
+          onMouseLeave={e => e.target.style.background = 'linear-gradient(135deg, rgba(80,130,255,0.7) 0%, rgba(120,80,255,0.6) 100%)'}
         >
           Masuk
         </button>
@@ -515,61 +550,52 @@ function MobileMessageList({ messages, selectedId, onSelect, loading }: {
     );
   }
 
-// ─── API ──────────────────────────────────────────
+// ─── API (Direct HTTP — via Appwrite hosting proxy) ──
 
-async function callApi(path: string, method: string = 'GET', body?: any): Promise<any> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/proxy'
-  const payload: any = { method, path }
-  if (body) payload.body = body
-
-  const res = await fetch(baseUrl, {
-    method: 'POST',
+async function callApi<T = any>(method: string, path: string, body?: any): Promise<T> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || ''
+  const url = `${baseUrl.replace(/\/+$/, '')}/api${path}`
+  const options: RequestInit = {
+    method,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
-
-  const execution = await res.json()
-  if (execution.status !== 'completed') {
-    throw new Error(`Function execution failed: ${execution.status}`)
+  }
+  if (body && method !== 'GET') {
+    options.body = JSON.stringify(body)
   }
 
-  if (execution.responseStatusCode < 200 || execution.responseStatusCode >= 300) {
-    try {
-      const parsed = JSON.parse(execution.responseBody)
-      throw new Error(parsed.error || `API error: ${execution.responseStatusCode}`)
-    } catch (e: any) {
-      throw e
-    }
+  const res = await fetch(url, options)
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status}`)
   }
 
-  return JSON.parse(execution.responseBody)
+  const result = await res.json()
+  if (!result.success) {
+    throw new Error(result.error || 'API error')
+  }
+
+  return result.data as T
 }
 
 async function fetchMessages(): Promise<Email[]> {
   try {
-    const result = await callApi(`/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`, 'GET')
-    if (result?.success && Array.isArray(result.data)) {
-      return result.data
-    }
-    return []
-  } catch {
+    const data = await callApi<Email[]>('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`)
+    return Array.isArray(data) ? data : []
+  } catch (e) {
+    console.warn('fetchMessages failed:', e)
     return []
   }
 }
 
 async function fetchStats(): Promise<StorageStats | null> {
   try {
-    const result = await callApi(`/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`, 'GET')
-    if (result?.success && result.data) {
-      return result.data
-    }
-    return null
-  } catch {
+    const data = await callApi<StorageStats>('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`)
+    return data || null
+  } catch (e) {
+    console.warn('fetchStats failed:', e)
     return null
   }
 }
+
 
 // ─── Main Page ────────────────────────────────────
 
