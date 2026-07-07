@@ -13,6 +13,11 @@ export default async ({ req, res, log, error }: any) => {
     return res.json({ ok: false, error: 'TELEGRAM_BOT_TOKEN not set' }, 500)
   }
 
+  const adminChatIds = (process.env.TELEGRAM_ADMIN_CHAT_IDS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.length > 0)
+
   const endpoint =
     process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.APPWRITE_ENDPOINT || ''
   const projectId =
@@ -60,6 +65,7 @@ export default async ({ req, res, log, error }: any) => {
 
   const updates = updatesData.result || []
   if (updates.length === 0) {
+    await checkNewEmails(databases, token, adminChatIds, log, error)
     return res.json({ ok: true, processed: 0 })
   }
 
@@ -70,6 +76,7 @@ export default async ({ req, res, log, error }: any) => {
       const userId = update.message?.from?.id || update.callback_query?.from?.id
       const userFirst = update.message?.from?.first_name || update.callback_query?.from?.first_name || 'User'
       const chatId = update.message?.chat?.id || update.callback_query?.message?.chat?.id
+      const userName = update.message?.from?.username || update.callback_query?.from?.username || ''
 
       if (!chatId) {
         log(`Skipping update ${update.update_id}: no chatId`)
@@ -90,9 +97,9 @@ export default async ({ req, res, log, error }: any) => {
 
       const text = update.message?.text || ''
 
-    if (text === '/start') {
-      await sendMessage(token, chatId,
-        `👋 Hello *${userFirst}!*
+      if (text === '/start') {
+        await sendMessage(token, chatId,
+          `👋 Hello *${userFirst}!*
 
 Welcome to *DamnMail* — Multi-domain Temporary Email.
 
@@ -100,7 +107,10 @@ Welcome to *DamnMail* — Multi-domain Temporary Email.
 ✏️ \`/create <username>\` — Create custom address
 
 Your temporary inbox will expire automatically.`
-      )
+        )
+        // Notify admins
+        const notifyStart = `👤 *${userFirst}*${userName ? ` (@${userName})` : ''} — \`${userId}\` started the bot`
+        await notifyAdmins(token, adminChatIds, notifyStart, log, error)
       } else if (text === '/generate') {
         const domains = await getActiveDomains(databases)
         if (domains.length === 0) {
@@ -109,16 +119,19 @@ Your temporary inbox will expire automatically.`
         }
         const username = generateUsername()
         await createInbox(databases, username, domains[0], String(chatId), token, log, error)
+        // Notify admins
+        const notifyGen = `📬 *${userFirst}*${userName ? ` (@${userName})` : ''} — \`${userId}\` generated \`${username}@${domains[0]}\``
+        await notifyAdmins(token, adminChatIds, notifyGen, log, error)
       } else if (text.startsWith('/create ')) {
         const parts = text.split(/\s+/)
         if (parts.length < 2) {
-          await sendMessage(token, chatId, 'Usage: `/create <username>`')
+          await sendMessage(token, chatId, 'Usage: \`/create <username>\`')
           continue
         }
         const username = parts.slice(1).join('').trim()
         if (!username || !/^[a-zA-Z0-9._-]{1,64}$/.test(username)) {
           await sendMessage(token, chatId,
-            '❌ Invalid username.\\!\\!\nAllowed: letters, numbers, dots, hyphens, underscores (max 64 chars)',
+            '❌ Invalid username.\nAllowed: letters, numbers, dots, hyphens, underscores (max 64 chars)',
           )
           continue
         }
@@ -128,6 +141,9 @@ Your temporary inbox will expire automatically.`
           continue
         }
         await createInbox(databases, username, domains[0], String(chatId), token, log, error)
+        // Notify admins
+        const notifyCreate = `📬 *${userFirst}*${userName ? ` (@${userName})` : ''} — \`${userId}\` created \`${username}@${domains[0]}\``
+        await notifyAdmins(token, adminChatIds, notifyCreate, log, error)
       }
     } catch (processError: any) {
       error(`Process update ${update.update_id}: ${processError.message}`)
@@ -150,6 +166,7 @@ Your temporary inbox will expire automatically.`
         to: '__internal__',
         subject: '__internal__',
         snippet: String(offset),
+        lastEmailNotif: new Date().toISOString(),
         text: '',
         attachments: '',
         createdAt: new Date(offset > 0 ? Date.now() : Date.now()).toISOString(),
@@ -158,6 +175,8 @@ Your temporary inbox will expire automatically.`
       error(`Failed to persist offset: ${createError.message}`)
     }
   }
+
+  await checkNewEmails(databases, token, adminChatIds, log, error)
 
   return res.json({ ok: true, processed: updates.length })
 }
@@ -170,6 +189,87 @@ async function sendMessage(token: string, chatId: number, text: string): Promise
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
   })
+}
+
+async function notifyAdmins(
+  token: string,
+  chatIds: string[],
+  text: string,
+  log: any,
+  error: any,
+): Promise<void> {
+  if (chatIds.length === 0) return
+  for (const id of chatIds) {
+    try {
+      await fetch(`${TG_API}${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: parseInt(id), text, parse_mode: 'Markdown' }),
+      })
+    } catch (e: any) {
+      error(`notify admin ${id}: ${e.message}`)
+    }
+  }
+}
+
+async function checkNewEmails(
+  databases: Databases,
+  token: string,
+  adminChatIds: string[],
+  log: any,
+  error: any,
+): Promise<void> {
+  if (!token || adminChatIds.length === 0) return
+  
+  // Read last notified email createdAt timestamp
+  let lastNotifAt = ''
+  try {
+    const state = await databases.getDocument(DB_ID, COLL_EMAILS, STATE_DOC_ID)
+    lastNotifAt = state.lastEmailNotif || ''
+  } catch {
+    // No state doc yet — use current time to avoid dumping all historical emails
+  }
+
+  if (!lastNotifAt) {
+    lastNotifAt = new Date().toISOString()
+  }
+
+  // Always filter by createdAt — lastNotifAt guaranteed set
+  const queries: any[] = [Query.limit(20), Query.greaterThan('createdAt', lastNotifAt)]
+  
+  let newEmails: any[] = []
+  try {
+    const result = await databases.listDocuments(DB_ID, COLL_EMAILS, queries)
+    newEmails = result.documents
+      .filter((d: any) => d.inboxAddress !== '__internal__' && d.$id !== STATE_DOC_ID)
+  } catch (e: any) {
+    error(`Email check query error: ${e.message}`)
+    return
+  }
+  
+  if (newEmails.length === 0) return
+  
+  log(`Sending ${newEmails.length} email notification(s) to admins`)
+  
+  for (const email of newEmails) {
+    const adminMsg = [
+      '📨 *New email*',
+      `To: \`${email.inboxAddress}\``,
+      `From: \`${email.from}\``,
+      `Subject: ${email.subject || '(no subject)'}`,
+    ].join('\n')
+    await notifyAdmins(token, adminChatIds, adminMsg, log, error)
+  }
+  
+  // Update last notified timestamp
+  const latestTime = newEmails[newEmails.length - 1].createdAt || new Date().toISOString()
+  try {
+    await databases.updateDocument(DB_ID, COLL_EMAILS, STATE_DOC_ID, {
+      lastEmailNotif: latestTime,
+    })
+  } catch (e: any) {
+    error(`Failed to save lastEmailNotif: ${e.message}`)
+  }
 }
 
 function generateUsername(): string {
