@@ -1,4 +1,4 @@
-import { Client, Databases, Storage, ID, Query } from 'node-appwrite';
+import { Client, Databases, Storage, Functions, ID, Query } from 'node-appwrite';
 
 const DB_ID = 'damnmail';
 const COLL_DOMAINS = 'domains';
@@ -17,6 +17,7 @@ export default async ({ req, res, log, error }: any) => {
       .setKey(req.headers['x-appwrite-key'] || process.env.APPWRITE_FUNCTION_API_KEY || '');
     const databases = new Databases(client);
     const storage = new Storage(client);
+    const functions = new Functions(client);
 
     let { path, method } = req;
     let body: Record<string, any> = {};
@@ -94,6 +95,12 @@ export default async ({ req, res, log, error }: any) => {
     }
 
     // POST /api/webhook/email — Cloudflare Email Worker ingress
+
+    // POST /api/webhook/telegram — Telegram Bot webhook
+    if (path === '/api/webhook/telegram' && method === 'POST') {
+      return await handleTelegramWebhook(functions, body, res, error, log);
+    }
+
     if (path === '/api/webhook/email' && method === 'POST') {
       return await handleEmailWebhook(databases, body, res, error, log);
     }
@@ -388,23 +395,29 @@ async function handleEmailWebhook(databases: Databases, body: any, res: any, err
   // Clean up email addresses (handle "Name <email>" format)
   const inboxAddress = to.includes('<') ? to.replace(/.*<(.+)>/, '$1').trim() : to.trim().toLowerCase();
   const fromAddress = from.includes('<') ? from.replace(/.*<(.+)>/, '$1').trim() : from.trim();
- 
+
   const username = inboxAddress.split('@')[0];
   const domain = inboxAddress.split('@')[1] || '';
 
+  // Only create inbox if it doesn't exist yet
   try {
-    // Auto-create inbox if not exists
-    await databases.createDocument(DB_ID, COLL_INBOXES, ID.unique(), {
-      address: inboxAddress,
-      username,
-      domain,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      telegramChatId: '',
-    });
-    log(`Auto-created inbox: ${inboxAddress}`);
-  } catch {
-    // Inbox already exists, that's fine
+    const existing = await databases.listDocuments(DB_ID, COLL_INBOXES, [
+      Query.equal('address', inboxAddress),
+      Query.limit(1),
+    ]);
+    if (existing.documents.length === 0) {
+      await databases.createDocument(DB_ID, COLL_INBOXES, ID.unique(), {
+        address: inboxAddress,
+        username,
+        domain,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        telegramChatId: '',
+      });
+      log(`Auto-created inbox: ${inboxAddress}`);
+    }
+  } catch (queryErr) {
+    error(`Inbox lookup error: ${queryErr.message}`);
   }
 
   // Generate snippet
@@ -434,3 +447,27 @@ async function handleEmailWebhook(databases: Databases, body: any, res: any, err
     return res.json({ success: false, error: 'Failed to store email' }, 500);
   }
 }
+
+async function handleTelegramWebhook(functions, body, res, error, log) {
+  const updateId = body?.update_id || body?.body?.update_id;
+  if (!updateId) {
+    return res.json({ ok: false, error: 'Invalid Telegram update' }, 400);
+  }
+
+  try {
+    await functions.createExecution(
+      'telegram-bot',
+      JSON.stringify(body),
+      false,
+      '/',
+      'POST',
+      {}
+    );
+    log('Telegram update ' + updateId + ' forwarded to telegram-bot');
+    return res.json({ ok: true });
+  } catch (err) {
+    error('Telegram webhook error: ' + err.message);
+    return res.json({ ok: false, error: err.message }, 500);
+  }
+}
+

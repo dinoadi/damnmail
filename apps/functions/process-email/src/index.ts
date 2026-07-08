@@ -165,6 +165,7 @@ export default async ({ req, res, log, error }: any) => {
     const chatId = inboxDoc.telegramChatId;
     const token = process.env.TELEGRAM_BOT_TOKEN || '';
 
+    // Kirim ke owner inbox (jika chatId terhubung)
     if (chatId && token) {
       try {
         const msg = formatTelegramMessage(from, subject, snippet, inboxAddress);
@@ -183,10 +184,10 @@ export default async ({ req, res, log, error }: any) => {
       }
     }
 
-    // Also notify admin if configured
+    // Kirim ke admin dengan format SAMA (rich notification + link)
     const adminChatIds = (process.env.TELEGRAM_ADMIN_CHAT_IDS || '').split(',').filter(Boolean);
     if (adminChatIds.length > 0 && token) {
-      const adminMsg = `📨 *New email for ${inboxAddress}*\n\nFrom: \`${from}\`\nSubject: ${subject}`;
+      const adminMsg = formatTelegramMessage(from, subject, snippet, inboxAddress);
       for (const adminId of adminChatIds) {
         if (adminId !== chatId) {
           // Don't double-notify if admin is also the inbox owner
