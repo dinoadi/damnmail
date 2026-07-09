@@ -79,6 +79,13 @@ export default async ({ req, res, log, error }: any) => {
     }
     inboxAddress = inboxAddress.toLowerCase().trim();
 
+    // If inboxAddress doesn't contain '@', use fallback
+    if (!inboxAddress.includes('@')) {
+      const domain = (process.env.DOMAINS || 'readyonbooking.app').split(',')[0].trim();
+      inboxAddress = `unparsed@${domain}`;
+      log(`Invalid recipient address, falling back to ${inboxAddress}`);
+    }
+
     // Check if inbox exists in Appwrite Database
     const client = new Client()
       .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.APPWRITE_ENDPOINT || '')
