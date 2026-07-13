@@ -1,10 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import Image from 'next/image'
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 
-// Dark mode CSS override — injected after email HTML to beat embedded email styles
-const EMAIL_DARK_CSS = '.dark .email-content *:not(img):not(svg):not(video):not(iframe):not(canvas){color:rgb(var(--ink))!important;background-color:transparent!important}.email-content img{max-width:100%!important;height:auto!important;border-radius:6px}.dark .email-content img{filter:brightness(0.9) contrast(1.15)}'
+const EMAIL_DARK_CSS = '.dark .email-content *:not(img):not(svg):not(video):not(iframe):not(canvas){color:rgb(var(--ink))!important;background-color:transparent!important}.email-content img{max-width:100%!important;height:auto!important;border-radius:8px}.dark .email-content img{filter:brightness(0.9) contrast(1.15)}'
 const INBOX_ADDRESS = 'all@readyonbooking.app'
 const POLL_INTERVAL = 5000
 const STATS_INTERVAL = 30000
@@ -12,36 +10,20 @@ const STATS_INTERVAL = 30000
 // ─── Types ────────────────────────────────────────
 
 interface Attachment {
-  id: string
-  filename: string
-  contentType: string
-  size: number
-  downloadUrl: string
-  contentId?: string
+  id: string; filename: string; contentType: string
+  size: number; downloadUrl: string; contentId?: string
 }
 
 interface Email {
-  id: string
-  inboxAddress: string
-  from: string
-  to: string
-  subject: string
-  html?: string
-  text?: string
-  snippet: string
-  receivedAt: string
-  attachments: Attachment[]
+  id: string; inboxAddress: string; from: string; to: string
+  subject: string; html?: string; text?: string; snippet: string
+  receivedAt: string; attachments: Attachment[]
 }
 
 interface StorageStats {
-  inboxAddress: string
-  totalEmails: number
-  totalAttachments: number
-  storageUsedBytes: number
-  storageLimit: number
-  storageUsedFormatted: string
-  storageLimitFormatted: string
-  usagePercent: number
+  inboxAddress: string; totalEmails: number; totalAttachments: number
+  storageUsedBytes: number; storageLimit: number
+  storageUsedFormatted: string; storageLimitFormatted: string; usagePercent: number
 }
 
 // ─── Helpers ──────────────────────────────────────
@@ -56,83 +38,110 @@ function formatBytes(bytes: number): string {
 
 function formatRelativeTime(dateStr: string): string {
   try {
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffMins = Math.floor(diffMs / 60000)
-    const diffHours = Math.floor(diffMs / 3600000)
-    const diffDays = Math.floor(diffMs / 86400000)
-
+    const date = new Date(dateStr); const now = new Date()
+    const diffMins = Math.floor((now.getTime() - date.getTime()) / 60000)
+    const diffHours = Math.floor(diffMins / 60); const diffDays = Math.floor(diffHours / 24)
     if (diffMins < 1) return 'Baru saja'
     if (diffMins < 60) return `${diffMins}m`
     if (diffHours < 24) return `${diffHours}j`
     if (diffDays < 7) return `${diffDays}h`
     return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })
-  } catch {
-    return dateStr
-  }
+  } catch { return dateStr }
 }
 
 function formatDateFull(dateStr: string): string {
   try {
-    const date = new Date(dateStr)
-    return date.toLocaleDateString('id-ID', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    return new Date(dateStr).toLocaleDateString('id-ID', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
     })
-  } catch {
-    return dateStr
-  }
+  } catch { return dateStr }
 }
 
-function getFileIcon(contentType: string): string {
-  if (!contentType) return '📎'
-  if (contentType.startsWith('image/')) return '🖼️'
-  if (contentType.startsWith('video/')) return '🎬'
-  if (contentType.startsWith('audio/')) return '🎵'
-  if (contentType.includes('pdf')) return '📄'
-  if (contentType.includes('zip') || contentType.includes('rar') || contentType.includes('tar')) return '📦'
-  if (contentType.includes('word') || contentType.includes('document')) return '📝'
-  if (contentType.includes('sheet') || contentType.includes('excel') || contentType.includes('spreadsheet')) return '📊'
+function getFileIcon(ct: string): string {
+  if (!ct) return '📎'
+  if (ct.startsWith('image/')) return '🖼️'
+  if (ct.startsWith('video/')) return '🎬'
+  if (ct.startsWith('audio/')) return '🎵'
+  if (ct.includes('pdf')) return '📄'
+  if (ct.includes('zip') || ct.includes('rar') || ct.includes('tar')) return '📦'
+  if (ct.includes('word') || ct.includes('document')) return '📝'
+  if (ct.includes('sheet') || ct.includes('excel') || ct.includes('spreadsheet')) return '📊'
   return '📎'
 }
 
 function extractName(email: string): string {
   const match = email.match(/^"?(.+?)"?\s*<(.+@.+)>$/)
-  if (match) return match[1].trim()
-  return email
+  return match ? match[1].trim() : email
 }
 
 function renderEmailHtml(email: Email): string {
   if (!email.html) return ''
-  // Replace CID inline image references with actual attachment URLs
-  const cidMap = new Map<string, string>();
+  const cidMap = new Map<string, string>()
   if (email.attachments) {
     for (const att of email.attachments) {
       if (att.contentId && att.downloadUrl) {
-        const cid = att.contentId.replace(/^<|>$/g, '');
-        cidMap.set(cid, att.downloadUrl);
+        cidMap.set(att.contentId.replace(/^<|>$/g, ''), att.downloadUrl)
       }
     }
   }
-  let htmlContent = email.html || '';
+  let html = email.html || ''
   if (cidMap.size > 0) {
-    htmlContent = htmlContent.replace(/src=["']cid:([^"']+)["']/gi, (match, cid) => {
-      const url = cidMap.get(cid);
-      return url ? `src="${url}"` : match;
-    });
+    html = html.replace(/src=["']cid:([^"']+)["']/gi, (_, cid) => {
+      const url = cidMap.get(cid)
+      return url ? `src="${url}"` : _
+    })
   }
-  return htmlContent;
+  return html
+}
+
+function stripHtmlToText(html: string): string {
+  if (!html) return ''
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function highlightText(text: string, query: string): ReactNode {
+  const q = query.trim()
+  if (!q) return text
+  const idx = text.toLowerCase().indexOf(q.toLowerCase())
+  if (idx === -1) return text
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-accent/30 text-inherit rounded-sm px-0.5">{text.slice(idx, idx + q.length)}</mark>
+      {text.slice(idx + q.length)}
+    </>
+  )
 }
 
 function copyToClipboard(text: string) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text)
-  }
+  if (navigator.clipboard) navigator.clipboard.writeText(text)
+}
+
+// ─── Decorative Background ────────────────────────
+
+function SkyBackground() {
+  return (
+    <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
+      <div className="absolute top-10 right-[15%] w-24 h-24 rounded-full bg-gradient-to-br from-accent/20 to-transparent blur-3xl dark:from-accent/10" />
+      <div className="absolute top-20 right-[20%] w-12 h-12 rounded-full bg-white/20 dark:bg-white/5 blur-2xl" />
+      <div className="absolute top-[15%] left-[5%] text-6xl opacity-[0.04] dark:opacity-[0.02] select-none animate-drift">☁️</div>
+      <div className="absolute top-[30%] right-[10%] text-5xl opacity-[0.03] dark:opacity-[0.015] select-none animate-float" style={{ animationDelay: '-2s' }}>☁️</div>
+      <div className="absolute bottom-[20%] left-[15%] text-4xl opacity-[0.025] dark:opacity-[0.01] select-none animate-drift" style={{ animationDelay: '-4s' }}>☁️</div>
+      <div className="absolute top-[8%] left-[8%] text-3xl opacity-[0.03] dark:opacity-[0.015] select-none animate-float rotate-45" style={{ animationDuration: '6s' }}>✈️</div>
+    </div>
+  )
 }
 
 // ─── Components ───────────────────────────────────
@@ -148,9 +157,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
     e.preventDefault()
     if (input.trim() === 'ZHAMBALA99') {
       onUnlock()
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('damnmail_unlocked', 'true')
-      }
+      if (typeof window !== 'undefined') localStorage.setItem('damnmail_unlocked', 'true')
     } else {
       setError(true)
       setTimeout(() => setError(false), 2000)
@@ -158,40 +165,22 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center z-50"
-      style={{
-        background: 'radial-gradient(ellipse at top, #12121e 0%, #0a0a12 50%, #06060e 100%)',
-      }}
-    >
-      <div
-        className="absolute inset-0 overflow-hidden pointer-events-none"
-      >
-        <div className="absolute -top-40 -left-40 w-80 h-80 rounded-full opacity-[0.03]" style={{background: 'radial-gradient(circle, #6060ff 0%, transparent 70%)'}} />
-        <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full opacity-[0.03]" style={{background: 'radial-gradient(circle, #40b0ff 0%, transparent 70%)'}} />
-      </div>
-      <form
-        onSubmit={handleSubmit}
-        className="relative animate-fade-in flex flex-col items-center gap-6 px-10 py-14 rounded-3xl mx-4"
-        style={{
-          background: 'linear-gradient(160deg, rgba(22,22,40,0.92) 0%, rgba(14,14,28,0.96) 100%)',
-          border: '1px solid rgba(255,255,255,0.06)',
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03) inset',
-          maxWidth: '380px',
-          width: '100%',
-        }}
-      >
-        <div
-          className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
+    <div className="fixed inset-0 flex items-center justify-center z-50 safe-bottom">
+      <SkyBackground />
+      <form onSubmit={handleSubmit} className="animate-fade-in relative flex flex-col items-center gap-6 px-8 py-12 sm:px-10 sm:py-14 rounded-3xl mx-4 max-w-[360px] w-full glass-strong">
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
           style={{
-            background: 'linear-gradient(135deg, rgba(100,120,255,0.18) 0%, rgba(80,200,255,0.08) 100%)',
-            border: '1px solid rgba(100,140,255,0.12)',
+            background: 'linear-gradient(135deg, rgb(var(--accent) / 0.2), rgb(var(--accent-dark) / 0.1))',
+            border: '1px solid rgb(var(--accent) / 0.15)'
           }}
         >
-          <span role="img" aria-label="mail">✉️</span>
+          <span role="img" aria-label="mail">✈️</span>
         </div>
         <div className="text-center">
-          <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#e8e8f0' }}>DamnMail</h1>
-          <p className="text-sm mt-2 font-light" style={{ color: '#7878a0' }}>Masukkan password untuk melanjutkan</p>
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'rgb(var(--ink))' }}>DamnMail</h1>
+          <p className="text-sm mt-1.5 font-light" style={{ color: 'rgb(var(--ink-secondary) / 0.8)' }}>
+            Masukkan password untuk melanjutkan
+          </p>
         </div>
         <input
           ref={ref}
@@ -201,27 +190,26 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
           placeholder="Password"
           className="w-full px-4 py-3 rounded-2xl text-sm outline-none transition-all duration-200"
           style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: error ? '1px solid rgba(255,80,80,0.5)' : '1px solid rgba(255,255,255,0.07)',
-            color: '#d0d0e8',
+            background: 'rgb(var(--accent) / 0.06)',
+            border: error ? '1px solid rgb(var(--danger) / 0.5)' : '1px solid rgb(var(--line) / 0.3)',
+            color: 'rgb(var(--ink))',
           }}
-          onFocus={e => { e.target.style.borderColor = 'rgba(100,140,255,0.4)'; e.target.style.background = 'rgba(255,255,255,0.06)' }}
-          onBlur={e => { e.target.style.borderColor = error ? 'rgba(255,80,80,0.5)' : 'rgba(255,255,255,0.07)'; e.target.style.background = 'rgba(255,255,255,0.04)' }}
+          onFocus={e => { e.target.style.borderColor = 'rgb(var(--accent) / 0.4)'; e.target.style.background = 'rgb(var(--accent) / 0.08)' }}
+          onBlur={e => { e.target.style.borderColor = error ? 'rgb(var(--danger) / 0.5)' : 'rgb(var(--line) / 0.3)'; e.target.style.background = 'rgb(var(--accent) / 0.06)' }}
         />
-        {error && <p className="text-xs -mt-3" style={{ color: '#ff6060' }}>Password salah</p>}
+        {error && <p className="text-xs -mt-3" style={{ color: 'rgb(var(--danger))' }}>Password salah</p>}
         <button
           type="submit"
-          className="w-full py-3 rounded-2xl text-sm font-semibold tracking-wide transition-all duration-200 active:scale-[0.97]"
+          className="w-full py-3 rounded-2xl text-sm font-semibold tracking-wide transition-all duration-200 active:scale-[0.97] text-white"
           style={{
-            background: 'linear-gradient(135deg, rgba(80,130,255,0.7) 0%, rgba(120,80,255,0.6) 100%)',
-            color: '#e8e8ff',
-            border: '1px solid rgba(100,130,255,0.15)',
+            background: 'linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-dark)))',
           }}
-          onMouseEnter={e => e.target.style.background = 'linear-gradient(135deg, rgba(100,150,255,0.8) 0%, rgba(140,100,255,0.7) 100%)'}
-          onMouseLeave={e => e.target.style.background = 'linear-gradient(135deg, rgba(80,130,255,0.7) 0%, rgba(120,80,255,0.6) 100%)'}
         >
           Masuk
         </button>
+        <p className="text-[10px] font-light" style={{ color: 'rgb(var(--ink-secondary) / 0.4)' }}>
+          ✈️ Penerbangan menuju inbox Anda
+        </p>
       </form>
     </div>
   )
@@ -231,7 +219,7 @@ function ThemeToggle() {
   const [dark, setDark] = useState(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem('damnmail-theme');
+    const stored = localStorage.getItem('damnmail-theme')
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
     const isDark = stored ? stored === 'dark' : prefersDark
     setDark(isDark)
@@ -242,13 +230,17 @@ function ThemeToggle() {
     const next = !dark
     setDark(next)
     document.documentElement.classList.toggle('dark', next)
-    localStorage.setItem('damnmail-theme', next ? 'dark' : 'light');
+    localStorage.setItem('damnmail-theme', next ? 'dark' : 'light')
   }
 
   return (
     <button
       onClick={toggle}
-      className="w-9 h-9 rounded-xl bg-panel-dark hover:bg-line flex items-center justify-center transition-colors text-lg"
+      className="w-9 h-9 rounded-xl flex items-center justify-center transition-all text-lg"
+      style={{
+        background: 'rgb(var(--accent) / 0.08)',
+        border: '1px solid rgb(var(--accent) / 0.1)',
+      }}
       aria-label="Toggle theme"
     >
       {dark ? '☀️' : '🌙'}
@@ -259,9 +251,9 @@ function ThemeToggle() {
 function StorageBar({ stats }: { stats: StorageStats | null }) {
   if (!stats) {
     return (
-      <div className="flex items-center gap-2.5 text-[11px] text-ink-secondary/60">
-        <div className="w-20 sm:w-28 h-1.5 rounded-full bg-line/60 overflow-hidden">
-          <div className="w-0 h-full rounded-full bg-accent/40 animate-pulse" />
+      <div className="flex items-center gap-2 text-[11px]" style={{ color: 'rgb(var(--ink-secondary) / 0.5)' }}>
+        <div className="w-20 sm:w-28 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgb(var(--line) / 0.3)' }}>
+          <div className="w-0 h-full rounded-full" style={{ background: 'rgb(var(--accent) / 0.3)' }} />
         </div>
       </div>
     )
@@ -269,27 +261,19 @@ function StorageBar({ stats }: { stats: StorageStats | null }) {
   const pct = stats.storageLimit > 0 ? Math.min((stats.storageUsedBytes / stats.storageLimit) * 100, 100) : 0
   const used = stats.storageUsedFormatted || formatBytes(stats.storageUsedBytes)
   const total = stats.storageLimitFormatted || formatBytes(stats.storageLimit)
+  const barColor = pct > 80 ? 'rgb(var(--danger))' : pct > 60 ? 'rgb(var(--warning))' : 'rgb(var(--accent))'
+
   return (
-    <div className="flex items-center gap-2.5 group cursor-default" title={`${used} / ${total} digunakan`}>
-      <svg className="w-3.5 h-3.5 text-ink-secondary/40 group-hover:text-accent transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <div className="flex items-center gap-2 group cursor-default" title={`${used} / ${total} digunakan`}>
+      <svg className="w-3.5 h-3.5 flex-shrink-0 transition-colors" style={{ color: 'rgb(var(--ink-secondary) / 0.4)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
       </svg>
-      <div className="w-16 sm:w-28 h-1.5 rounded-full bg-line/60 overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-1000 ease-out"
-          style={{
-            width: `${pct}%`,
-            background: pct > 80
-              ? 'rgb(var(--danger))'
-              : pct > 60
-              ? 'rgb(var(--warning))'
-              : 'rgb(var(--accent))',
-          }}
-        />
+      <div className="w-16 sm:w-28 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgb(var(--line) / 0.3)' }}>
+        <div className="h-full rounded-full transition-all duration-1000 ease-out" style={{ width: `${pct}%`, background: barColor }} />
       </div>
-      <span className="text-[11px] text-ink-secondary/70 group-hover:text-ink-secondary transition-colors whitespace-nowrap tabular-nums">
+      <span className="text-[11px] whitespace-nowrap tabular-nums transition-colors" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>
         {used}
-        <span className="text-ink-secondary/50 mx-0.5">/</span>
+        <span style={{ color: 'rgb(var(--ink-secondary) / 0.3)' }} className="mx-0.5">/</span>
         {total}
       </span>
     </div>
@@ -298,123 +282,104 @@ function StorageBar({ stats }: { stats: StorageStats | null }) {
 
 function MessageSkeleton() {
   return (
-    <div className="px-4 py-3.5 flex flex-col gap-2 border-b border-line">
+    <div className="px-4 py-3.5 flex flex-col gap-2 border-b" style={{ borderColor: 'rgb(var(--line) / 0.3)' }}>
       <div className="flex items-center gap-2">
         <div className="skeleton h-4 w-32 rounded-md" />
         <div className="skeleton h-3 w-12 rounded-md ml-auto" />
       </div>
       <div className="skeleton h-5 w-48 rounded-md" />
-      <div className="skeleton h-3 w-64 rounded-md" />
+      <div className="skeleton h-3 w-56 rounded-md" />
     </div>
   )
 }
 
 function AttachmentCard({ att }: { att: Attachment }) {
-  const icon = getFileIcon(att.contentType);
-  const isImage = att.contentType.startsWith('image/');
+  const icon = getFileIcon(att.contentType)
+  const isImage = att.contentType.startsWith('image/')
 
   return (
     <a
-      href={att.downloadUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="group relative flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-line bg-panel-dark hover:border-accent/40 hover:bg-panel-light transition-all"
+      href={att.downloadUrl} target="_blank" rel="noopener noreferrer"
+      className="group relative flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all"
+      style={{
+        border: '1px solid rgb(var(--line) / 0.3)',
+        background: 'rgb(var(--accent) / 0.03)',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgb(var(--accent) / 0.4)'; e.currentTarget.style.background = 'rgb(var(--accent) / 0.06)' }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgb(var(--line) / 0.3)'; e.currentTarget.style.background = 'rgb(var(--accent) / 0.03)' }}
     >
       {isImage ? (
-        <div className="relative w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-panel-light">
-          <img
-            src={att.downloadUrl}
-            alt={att.filename || 'attachment'}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            loading="lazy"
-          />
-          <div className="absolute inset-0 ring-1 ring-inset ring-black/5 dark:ring-white/10 rounded-lg"></div>
+        <div className="relative w-10 h-10 rounded-lg overflow-hidden flex-shrink-0" style={{ background: 'rgb(var(--accent) / 0.05)' }}>
+          <img src={att.downloadUrl} alt={att.filename || 'attachment'} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
+          <div className="absolute inset-0 ring-1 ring-inset rounded-lg" style={{ borderColor: 'rgb(var(--line) / 0.2)' }} />
         </div>
       ) : (
         <span className="text-lg flex-shrink-0">{icon}</span>
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-ink truncate">{att.filename || 'unnamed'}</p>
-        <p className="text-[10px] text-ink-secondary mt-0.5">{formatBytes(att.size)}{isImage ? ' · Gambar' : ''}</p>
+        <p className="text-xs font-medium truncate" style={{ color: 'rgb(var(--ink))' }}>{att.filename || 'unnamed'}</p>
+        <p className="text-[10px] mt-0.5" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>{formatBytes(att.size)}{isImage ? ' · Gambar' : ''}</p>
       </div>
-      <svg className="w-4 h-4 text-ink-secondary/40 group-hover:text-accent transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <svg className="w-4 h-4 flex-shrink-0 transition-colors" style={{ color: 'rgb(var(--ink-secondary) / 0.3)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
       </svg>
     </a>
   )
 }
 
-function EmailDetail({
-  email,
-  onClose,
-  onDelete,
-}: {
-  email: Email
-  onClose: () => void
-  onDelete?: () => void
-}) {
+function EmailDetail({ email, onClose, onDelete }: { email: Email; onClose: () => void; onDelete?: () => void }) {
   const hasAttachments = email.attachments && email.attachments.length > 0
 
-  // Inject dark mode style override after email HTML renders
   useEffect(() => {
-    if (!email?.html) return;
-    const s = document.createElement('style');
-    s.id = 'email-dark-override';
-    s.textContent = EMAIL_DARK_CSS;
-    document.body.appendChild(s);
-    return () => {
-      const el = document.getElementById('email-dark-override');
-      if (el) el.remove();
-    };
-  }, [email?.id]);
+    if (!email?.html) return
+    const s = document.createElement('style')
+    s.id = 'email-dark-override'
+    s.textContent = EMAIL_DARK_CSS
+    document.body.appendChild(s)
+    return () => { document.getElementById('email-dark-override')?.remove() }
+  }, [email?.id])
 
   return (
-    <div className="animate-slide-in h-full flex flex-col bg-panel-light border-l border-line">
-      {/* Close button for mobile */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-line md:hidden">
-        <button
-          onClick={onClose}
-          className="p-1.5 -ml-1.5 rounded-lg hover:bg-panel-dark transition-colors text-ink-secondary"
-        >
+    <div className="animate-slide-in h-full flex flex-col" style={{ background: 'rgb(var(--accent) / 0.02)' }}>
+      <div className="flex items-center gap-3 px-4 py-3 border-b md:hidden" style={{ borderColor: 'rgb(var(--line) / 0.3)' }}>
+        <button onClick={onClose} className="p-1.5 -ml-1.5 rounded-lg transition-colors" style={{ color: 'rgb(var(--ink-secondary))' }}>
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <span className="text-sm font-medium text-ink-secondary">Detail Email</span>
+        <span className="text-sm font-medium" style={{ color: 'rgb(var(--ink-secondary) / 0.8)' }}>Detail Email</span>
       </div>
 
-      {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
-        {/* Email Header */}
-        <div className="px-5 pt-5 pb-4 space-y-3">
-          <h2 className="text-lg font-semibold text-ink leading-snug">
+        <div className="px-4 sm:px-5 pt-5 pb-4 space-y-3">
+          <h2 className="text-lg font-semibold leading-snug" style={{ color: 'rgb(var(--ink))' }}>
             {email.subject || '(Tanpa subjek)'}
           </h2>
-
           <div className="space-y-2 text-sm">
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-full bg-accent/10 flex items-center justify-center text-sm font-semibold text-accent flex-shrink-0 mt-0.5">
+              <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0 mt-0.5"
+                style={{ background: 'rgb(var(--accent) / 0.12)', color: 'rgb(var(--accent))' }}>
                 {(extractName(email.from) || email.from || '?').charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium text-ink">{extractName(email.from) || email.from}</span>
-                  <span className="text-xs text-ink-secondary truncate">&lt;{email.from.replace(/^.*<(.+)>$/, '$1') || email.from}&gt;</span>
+                  <span className="text-sm font-medium" style={{ color: 'rgb(var(--ink))' }}>{extractName(email.from) || email.from}</span>
+                  <span className="text-xs truncate" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>
+                    &lt;{email.from.replace(/^.*<(.+)>$/, '$1') || email.from}&gt;
+                  </span>
                 </div>
-                <div className="flex items-center gap-3 mt-1 text-xs text-ink-secondary">
+                <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>
                   <span>kepada {email.to}</span>
-                  <span className="text-ink-secondary/50">·</span>
+                  <span style={{ color: 'rgb(var(--ink-secondary) / 0.3)' }}>·</span>
                   <span>{formatDateFull(email.receivedAt)}</span>
                 </div>
                 <div className="flex items-center gap-2 mt-2">
                   <button
-                    onClick={() => {
-                      if (window.confirm('Hapus email ini?')) {
-                        onDelete?.()
-                      }
-                    }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-red-500/60 hover:text-red-500 hover:bg-red-500/5 transition-colors"
-                    title="Hapus email"
+                    onClick={() => { if (window.confirm('Hapus email ini?')) onDelete?.() }}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors"
+                    style={{ color: 'rgb(var(--danger) / 0.6)' }}
+                    onMouseEnter={e => e.currentTarget.style.color = 'rgb(var(--danger))'}
+                    onMouseLeave={e => e.currentTarget.style.color = 'rgb(var(--danger) / 0.6)'}
                   >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -426,47 +391,41 @@ function EmailDetail({
             </div>
           </div>
         </div>
+
         {hasAttachments && (
-          <div className="px-5 pb-3">
+          <div className="px-4 sm:px-5 pb-3">
             <div className="flex items-center gap-2 mb-3">
-              <svg className="w-3.5 h-3.5 text-ink-secondary/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg className="w-3.5 h-3.5" style={{ color: 'rgb(var(--ink-secondary) / 0.4)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
               </svg>
-              <span className="text-xs font-medium text-ink-secondary uppercase tracking-wider">Lampiran</span>
-              <span className="text-[10px] text-ink-secondary/60 bg-panel-dark px-1.5 py-0.5 rounded-md">{email.attachments.length}</span>
+              <span className="text-xs font-medium uppercase tracking-wider" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>Lampiran</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ color: 'rgb(var(--ink-secondary) / 0.5)', background: 'rgb(var(--accent) / 0.06)' }}>{email.attachments.length}</span>
             </div>
             <div className="flex flex-wrap gap-2">
-              {email.attachments.map((att) => (
-                <AttachmentCard key={att.id} att={att} />
-              ))}
+              {email.attachments.map((att) => <AttachmentCard key={att.id} att={att} />)}
             </div>
           </div>
         )}
 
-        {/* Separator */}
-        <div className="px-5 pb-1">
+        <div className="px-4 sm:px-5 pb-1">
           <div className="flex items-center gap-3">
-            <div className="flex-1 border-t border-line" />
-            <svg className="w-3 h-3 text-ink-secondary/30 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <div className="flex-1 border-t" style={{ borderColor: 'rgb(var(--line) / 0.3)' }} />
+            <svg className="w-3 h-3 flex-shrink-0" style={{ color: 'rgb(var(--ink-secondary) / 0.2)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9h16.5m-16.5 6h16.5" />
             </svg>
-            <div className="flex-1 border-t border-line" />
+            <div className="flex-1 border-t" style={{ borderColor: 'rgb(var(--line) / 0.3)' }} />
           </div>
         </div>
 
-        {/* Email Body */}
-        <div className="px-5 pb-8">
+        <div className="px-4 sm:px-5 pb-8">
           {email.html ? (
-            <div
-              className="email-content text-sm"
-              dangerouslySetInnerHTML={{ __html: renderEmailHtml(email) }}
-            />
+            <div className="email-content text-sm" dangerouslySetInnerHTML={{ __html: renderEmailHtml(email) }} />
           ) : (
-            <pre className="text-sm whitespace-pre-wrap font-sans text-ink leading-relaxed">{email.text || 'Tidak ada konten'}</pre>
+            <pre className="text-sm whitespace-pre-wrap font-sans leading-relaxed" style={{ color: 'rgb(var(--ink))' }}>{email.text || 'Tidak ada konten'}</pre>
           )}
+        </div>
       </div>
-      </div>
-      </div>
+    </div>
   )
 }
 
@@ -474,15 +433,15 @@ function EmptyState() {
   return (
     <div className="flex-1 flex items-center justify-center">
       <div className="text-center px-6 py-12 animate-fade-in">
-        <div className="w-16 h-16 rounded-2xl bg-accent/5 flex items-center justify-center text-3xl mx-auto mb-4">
-          📭
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4" style={{ background: 'rgb(var(--accent) / 0.06)' }}>
+          ✈️
         </div>
-        <h3 className="text-lg font-semibold text-ink mb-1">Inbox Kosong</h3>
-        <p className="text-sm text-ink-secondary max-w-xs mx-auto">
-          Belum ada email yang masuk ke <span className="font-medium text-ink">{INBOX_ADDRESS}</span>
+        <h3 className="text-lg font-semibold mb-1" style={{ color: 'rgb(var(--ink))' }}>Inbox Kosong</h3>
+        <p className="text-sm max-w-xs mx-auto" style={{ color: 'rgb(var(--ink-secondary) / 0.8)' }}>
+          Belum ada email yang masuk ke <span className="font-medium" style={{ color: 'rgb(var(--ink))' }}>{INBOX_ADDRESS}</span>
         </p>
-        <p className="text-xs text-ink-secondary/60 mt-3">
-          Email yang masuk akan muncul secara otomatis
+        <p className="text-xs mt-3" style={{ color: 'rgb(var(--ink-secondary) / 0.5)' }}>
+          Email akan muncul secara otomatis ✈️
         </p>
       </div>
     </div>
@@ -491,106 +450,124 @@ function EmptyState() {
 
 function NoEmailSelected() {
   return (
-    <div className="hidden md:flex flex-1 items-center justify-center bg-panel-light border-l border-line">
+    <div className="hidden md:flex flex-1 items-center justify-center" style={{ background: 'rgb(var(--accent) / 0.02)' }}>
       <div className="text-center px-6 animate-fade-in">
-        <div className="w-16 h-16 rounded-2xl bg-accent/5 flex items-center justify-center text-3xl mx-auto mb-4">
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4" style={{ background: 'rgb(var(--accent) / 0.06)' }}>
           💬
         </div>
-        <h3 className="text-base font-semibold text-ink">Pilih Email</h3>
-        <p className="text-sm text-ink-secondary mt-1">Klik email di samping untuk membaca</p>
+        <h3 className="text-base font-semibold" style={{ color: 'rgb(var(--ink))' }}>Pilih Email</h3>
+        <p className="text-sm mt-1" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>Klik email di samping untuk membaca</p>
       </div>
     </div>
   )
 }
 
-function MobileMessageList({ messages, selectedId, onSelect, loading }: {
-  messages: Email[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-  loading: boolean
-}) {
+function MessageItem({ msg, selected, onSelect, idx, query }: { msg: Email; selected: boolean; onSelect: () => void; idx: number; query?: string }) {
   return (
-    <div className="md:hidden h-full flex flex-col">
-      <div className="flex-1 overflow-y-auto divide-y divide-line">
-        {loading && messages.length === 0 ? (
-          <>
-            <MessageSkeleton />
-            <MessageSkeleton />
-            <MessageSkeleton />
-            <MessageSkeleton />
-            <MessageSkeleton />
-          </>
-        ) : messages.length === 0 ? (
-          <EmptyState />
-        ) : (
-          messages.map((msg, idx) => (
-            <button
-              key={msg.id}
-              onClick={() => onSelect(msg.id)}
-              className={`message-item w-full text-left px-4 py-3 transition-colors animate-fade-in ${
-                selectedId === msg.id ? 'active' : ''
-              }`}
-              style={{ animationDelay: `${idx * 30}ms` }}
-            >
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-accent/8 flex items-center justify-center text-xs font-semibold text-accent flex-shrink-0 mt-0.5">
-                  {(extractName(msg.from) || msg.from || '?').charAt(0).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2 mb-0.5">
-                    <span className="text-sm font-medium text-ink truncate">
-                      {extractName(msg.from) || msg.from}
-                    </span>
-                    <span className="text-[10px] text-ink-secondary whitespace-nowrap flex-shrink-0 mt-0.5">
-                      {formatRelativeTime(msg.receivedAt)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-ink font-semibold truncate mb-0.5">
-                    {msg.subject || '(Tanpa subjek)'}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs text-ink-secondary truncate flex-1">
-                      {msg.snippet || '...'}
-                    </p>
-                    {msg.attachments && msg.attachments.length > 0 && (
-                      <span className="badge-attachment flex-shrink-0">
-                        📎 {msg.attachments.length}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </button>
-          ))
-          )}
+    <button
+      onClick={onSelect}
+      className={`message-item w-full text-left px-4 py-3 sm:py-3.5 transition-all animate-fade-in ${selected ? 'active' : ''}`}
+      style={{
+        borderBottom: '1px solid rgb(var(--line) / 0.2)',
+        animationDelay: `${idx * 25}ms`,
+      }}
+    >
+      <div className="flex items-start gap-2.5 sm:gap-3">
+        <div className="w-8 h-8 min-w-[32px] rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-0.5"
+          style={{ background: selected ? 'rgb(var(--accent) / 0.15)' : 'rgb(var(--accent) / 0.08)', color: 'rgb(var(--accent))' }}>
+          {(extractName(msg.from) || msg.from || '?').charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2 mb-0.5">
+            <span className="text-sm font-medium truncate" style={{ color: 'rgb(var(--ink))' }}>
+              {extractName(msg.from) || msg.from}
+            </span>
+            <span className="text-[10px] whitespace-nowrap flex-shrink-0 mt-0.5" style={{ color: 'rgb(var(--ink-secondary) / 0.6)' }}>
+              {formatRelativeTime(msg.receivedAt)}
+            </span>
+          </div>
+          <p className="text-sm font-semibold truncate mb-0.5" style={{ color: 'rgb(var(--ink))' }}>
+              {highlightText(msg.subject || '(Tanpa subjek)', query || '')}
+          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs truncate flex-1" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>
+              {highlightText(msg.snippet || '...', query || '')}
+            </p>
+            {msg.attachments && msg.attachments.length > 0 && (
+              <span className="badge-attachment flex-shrink-0">
+                📎 {msg.attachments.length}
+              </span>
+            )}
+          </div>
         </div>
       </div>
-    );
-  }
+    </button>
+  )
+}
 
-// ─── API (Direct HTTP — via Appwrite hosting proxy) ──
+// ─── Search Bar ───────────────────────────────────
+
+function SearchBar({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex-shrink-0 px-3 py-2" style={{ background: 'rgb(var(--accent) / 0.01)' }}>
+      <div className="relative">
+        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style={{ color: 'rgb(var(--ink-secondary) / 0.4)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+        </svg>
+        <input
+          type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="Cari pengirim, subjek, atau isi..."
+          className="w-full pl-9 pr-8 py-2 rounded-xl text-xs outline-none transition-all"
+          style={{
+            background: 'rgb(var(--accent) / 0.06)',
+            border: '1px solid rgb(var(--glass-border))',
+            color: 'rgb(var(--ink))',
+          }}
+          onFocus={e => { e.target.style.borderColor = 'rgb(var(--accent) / 0.4)' }}
+          onBlur={e => { e.target.style.borderColor = 'rgb(var(--glass-border))' }}
+        />
+        {value && (
+          <button
+            onClick={() => onChange('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors"
+            style={{ color: 'rgb(var(--ink-secondary) / 0.5)' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'rgb(var(--ink))'}
+            onMouseLeave={e => e.currentTarget.style.color = 'rgb(var(--ink-secondary) / 0.5)'}
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── API ──────────────────────────────────────────
 
 async function callApi<T = any>(method: string, path: string, body?: any): Promise<T> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || ''
-  const url = `${baseUrl.replace(/\/+$/, '')}/api${path}`
-  const options: RequestInit = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-  }
-  if (body && method !== 'GET') {
-    options.body = JSON.stringify(body)
-  }
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://sgp.cloud.appwrite.io/v1/functions/api/executions'
+  const payload: Record<string, any> = { method, path: `/api${path}` }
+  if (body && method !== 'GET') payload.body = JSON.stringify(body)
 
-  const res = await fetch(url, options)
-  if (!res.ok) {
-    throw new Error(`API error: ${res.status}`)
-  }
+  const res = await fetch(baseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Appwrite-Project': 'damnmail' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`API request failed: ${res.status}`)
 
-  const result = await res.json()
-  if (!result.success) {
-    throw new Error(result.error || 'API error')
+  const execution = await res.json()
+  if (execution.status !== 'completed') throw new Error(`Function execution gagal: ${execution.status}`)
+  if (execution.responseStatusCode < 200 || execution.responseStatusCode >= 300) {
+    const parsed = JSON.parse(execution.responseBody)
+    throw new Error(parsed.error || `API error: ${execution.responseStatusCode}`)
   }
-
+  const result = JSON.parse(execution.responseBody)
+  if (!result.success) throw new Error(result.error || 'API error')
   return result.data as T
 }
 
@@ -598,33 +575,18 @@ async function fetchMessages(): Promise<Email[]> {
   try {
     const data = await callApi<Email[]>('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`)
     return Array.isArray(data) ? data : []
-  } catch (e) {
-    console.warn('fetchMessages failed:', e)
-    return []
-  }
+  } catch { return [] }
 }
 
 async function fetchStats(): Promise<StorageStats | null> {
-  try {
-    const data = await callApi<StorageStats>('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`)
-    return data || null
-  } catch (e) {
-    console.warn('fetchStats failed:', e)
-    return null
-  }
+  try { return (await callApi<StorageStats>('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`)) || null }
+  catch { return null }
 }
 
 async function deleteMessage(messageId: string): Promise<boolean> {
-  try {
-    await callApi('DELETE', `/messages/${messageId}`)
-    return true
-  } catch (e) {
-    console.warn('deleteMessage failed:', e)
-    return false
-  }
+  try { await callApi('DELETE', `/messages/${messageId}`); return true }
+  catch { return false }
 }
-
-
 
 // ─── Main Page ────────────────────────────────────
 
@@ -635,67 +597,58 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [stats, setStats] = useState<StorageStats | null>(null)
   const [copied, setCopied] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const selectedEmail = messages.find((m) => m.id === selectedId) || null
 
-  // Unlock check
-  useEffect(() => {
-    if (typeof window !== 'undefined' && localStorage.getItem('damnmail_unlocked') === 'true') {
-      setLocked(false)
+  // Precompute a lowercase searchable blob per message (includes the full email body).
+  const searchBlobs = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const m of messages) {
+      const body = m.html ? stripHtmlToText(m.html) : (m.text || '')
+      const blob = [m.from, m.subject, m.text, m.snippet, body].join(' ').toLowerCase()
+      map.set(m.id, blob)
     }
+    return map
+  }, [messages])
+
+  const filteredMessages = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return messages
+    return messages.filter((m) => (searchBlobs.get(m.id) || '').includes(q))
+  }, [messages, searchQuery, searchBlobs])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('damnmail_unlocked') === 'true') setLocked(false)
   }, [])
 
-  // Poll messages
   useEffect(() => {
     if (locked) return
-
-    const poll = async () => {
-      const data = await fetchMessages()
-      setMessages(data)
-      setLoading(false)
-    }
-
+    const poll = async () => { const data = await fetchMessages(); setMessages(data); setLoading(false) }
     poll()
     const interval = setInterval(poll, POLL_INTERVAL)
     return () => clearInterval(interval)
   }, [locked])
 
-  // Poll stats
   useEffect(() => {
     if (locked) return
-
-    const poll = async () => {
-      const data = await fetchStats()
-      setStats(data)
-    }
-
+    const poll = async () => { const data = await fetchStats(); setStats(data) }
     poll()
     const interval = setInterval(poll, STATS_INTERVAL)
     return () => clearInterval(interval)
   }, [locked])
 
-  const handleUnlock = useCallback(() => {
-    setLocked(false)
-  }, [])
-
-  const handleSelectMessage = useCallback((id: string) => {
-    setSelectedId((prev) => (prev === id ? null : id))
-  }, [])
-
-  const handleCloseDetail = useCallback(() => {
-    setSelectedId(null)
-  }, [])
-
+  const handleUnlock = useCallback(() => setLocked(false), [])
+  const handleSelectMessage = useCallback((id: string) => setSelectedId((prev) => (prev === id ? null : id)), [])
+  const handleCloseDetail = useCallback(() => setSelectedId(null), [])
   const handleDeleteMessage = useCallback(async () => {
     if (!selectedEmail) return
-    const deleted = await deleteMessage(selectedEmail.id)
-    if (deleted) {
+    if (await deleteMessage(selectedEmail.id)) {
       setMessages((prev) => prev.filter((m) => m.id !== selectedEmail.id))
       setSelectedId(null)
       const freshStats = await fetchStats()
       if (freshStats) setStats(freshStats)
     }
   }, [selectedEmail?.id])
-
 
   const handleCopy = async () => {
     await copyToClipboard(INBOX_ADDRESS)
@@ -709,27 +662,37 @@ export default function Home() {
     <>
       {locked && <PasswordGate onUnlock={handleUnlock} />}
 
-      <div className="h-screen flex flex-col bg-canvas">
-        {/* ─── Header ────────────────────────── */}
-        <header className="flex-shrink-0 flex items-center gap-3 px-4 md:px-6 py-3 bg-panel-light/80 backdrop-blur-lg border-b border-line sticky top-0 z-20">
-          <div className="flex items-center gap-2.5 mr-2">
-            <div className="w-8 h-8 rounded-xl bg-accent flex items-center justify-center text-white text-sm font-bold">
-              D
+      <div className="h-screen flex flex-col safe-bottom">
+        <SkyBackground />
+
+        {/* ─── Glass Header ─────────────────── */}
+        <header className="flex-shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 sm:py-3 glass border-b sticky top-0 z-20"
+          style={{ borderColor: 'rgb(var(--glass-border))' }}>
+
+          <div className="flex items-center gap-2 mr-1 sm:mr-2">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center text-white text-sm font-bold"
+              style={{ background: 'linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-dark)))' }}>
+              ✈
             </div>
-            <h1 className="text-base font-bold text-ink hidden sm:block">DamnMail</h1>
+            <h1 className="text-sm sm:text-base font-bold hidden sm:block" style={{ color: 'rgb(var(--ink))' }}>DamnMail</h1>
           </div>
 
           <div className="flex-1 min-w-0">
             <button
               onClick={handleCopy}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-panel-dark hover:bg-line transition-colors text-xs font-mono text-ink-secondary truncate max-w-[240px]"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-mono truncate max-w-[180px] sm:max-w-[240px] transition-all no-select"
+              style={{
+                background: 'rgb(var(--accent) / 0.06)',
+                border: '1px solid rgb(var(--accent) / 0.1)',
+                color: 'rgb(var(--ink-secondary))',
+              }}
               title="Klik untuk copy"
             >
               <span className="truncate">{INBOX_ADDRESS}</span>
               {copied ? (
-                <span className="text-accent font-medium flex-shrink-0">Tersalin!</span>
+                <span className="font-medium flex-shrink-0" style={{ color: 'rgb(var(--accent))' }}>Tersalin!</span>
               ) : (
-                <svg className="w-3.5 h-3.5 flex-shrink-0 text-ink-secondary/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'rgb(var(--ink-secondary) / 0.5)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                   <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
                 </svg>
@@ -737,78 +700,80 @@ export default function Home() {
             </button>
           </div>
 
-
           <ThemeToggle />
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 sm:gap-3">
             <StorageBar stats={stats} />
-            <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-panel-dark text-[11px] text-ink-secondary">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-              <span>{messages.length}</span>
+            <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px]"
+              style={{ background: 'rgb(var(--accent) / 0.06)', color: 'rgb(var(--ink-secondary) / 0.8)' }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'rgb(var(--accent))' }} />
+              <span className="tabular-nums">{searchQuery ? `${filteredMessages.length}/${messages.length}` : messages.length}</span>
             </span>
           </div>
         </header>
 
         {/* ─── Main Content ──────────────────── */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Message List - hidden on mobile when detail is open */}
-          <div className={`w-full md:w-[380px] lg:w-[420px] flex-shrink-0 border-r border-line bg-panel-light/50 flex flex-col ${
+          {/* Message List - hidden on mobile when detail open */}
+          <div className={`w-full md:w-[360px] lg:w-[400px] flex-shrink-0 flex flex-col ${
             isMobileDetailOpen ? 'hidden md:flex' : 'flex'
-          }`}>
+          }`} style={{ borderRight: '1px solid rgb(var(--line) / 0.2)' }}>
+
+            {/* Search Bar */}
+            <SearchBar value={searchQuery} onChange={setSearchQuery} />
 
             {/* Mobile list */}
-            <MobileMessageList
-              messages={messages}
-              selectedId={selectedId}
-              onSelect={handleSelectMessage}
-              loading={loading}
-            />
+            <div className="md:hidden flex-1 overflow-y-auto">
+              {loading && messages.length === 0 ? (
+                <div className="divide-y" style={{ borderColor: 'rgb(var(--line) / 0.2)' }}>
+                  <MessageSkeleton /><MessageSkeleton /><MessageSkeleton /><MessageSkeleton /><MessageSkeleton />
+                </div>
+              ) : filteredMessages.length === 0 ? (
+                searchQuery ? (
+                  <div className="flex items-center justify-center py-16">
+                    <div className="text-center px-6 animate-fade-in">
+                      <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-3" style={{ background: 'rgb(var(--accent) / 0.06)' }}>🔍</div>
+                      <p className="text-sm font-medium" style={{ color: 'rgb(var(--ink))' }}>Tidak ditemukan</p>
+                      <p className="text-xs mt-1" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>Coba kata kunci lain</p>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState />
+                )
+              ) : (
+                <div className="divide-y" style={{ borderColor: 'rgb(var(--line) / 0.2)' }}>
+                  {filteredMessages.map((msg, idx) => (
+                    <MessageItem key={msg.id} msg={msg} selected={selectedId === msg.id} onSelect={() => handleSelectMessage(msg.id)} idx={idx} query={searchQuery} />
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Desktop list */}
-            <div className="hidden md:flex flex-1 flex-col overflow-y-auto divide-y divide-line">
+            <div className="hidden md:flex flex-col flex-1 overflow-y-auto">
               {loading && messages.length === 0 ? (
-                <>
-                  <MessageSkeleton />
-                  <MessageSkeleton />
-                  <MessageSkeleton />
-                  <MessageSkeleton />
-                  <MessageSkeleton />
-                  <MessageSkeleton />
-                </>
-              ) : messages.length === 0 ? (
-                <EmptyState />
+                <div className="divide-y" style={{ borderColor: 'rgb(var(--line) / 0.2)' }}>
+                  <MessageSkeleton /><MessageSkeleton /><MessageSkeleton />
+                  <MessageSkeleton /><MessageSkeleton /><MessageSkeleton />
+                </div>
+              ) : filteredMessages.length === 0 ? (
+                searchQuery ? (
+                  <div className="flex items-center justify-center py-16">
+                    <div className="text-center px-6 animate-fade-in">
+                      <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-3" style={{ background: 'rgb(var(--accent) / 0.06)' }}>🔍</div>
+                      <p className="text-sm font-medium" style={{ color: 'rgb(var(--ink))' }}>Tidak ditemukan</p>
+                      <p className="text-xs mt-1" style={{ color: 'rgb(var(--ink-secondary) / 0.7)' }}>Coba kata kunci lain</p>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyState />
+                )
               ) : (
-                messages.map((msg) => (
-                  <button
-                    key={msg.id}
-                    onClick={() => handleSelectMessage(msg.id)}
-                    className={`message-item w-full text-left px-4 py-3.5 transition-colors ${
-                      selectedId === msg.id ? 'active' : ''
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <span className="text-sm font-semibold text-ink truncate">
-                        {extractName(msg.from) || msg.from}
-                      </span>
-                      <span className="text-[10px] text-ink-secondary whitespace-nowrap flex-shrink-0 mt-[3px]">
-                        {formatRelativeTime(msg.receivedAt)}
-                      </span>
-                    </div>
-                    <p className="text-sm text-ink truncate mb-0.5">
-                      {msg.subject || '(Tanpa subjek)'}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-ink-secondary truncate flex-1">
-                        {msg.snippet || '...'}
-                      </p>
-                      {msg.attachments && msg.attachments.length > 0 && (
-                        <span className="text-xs text-ink-secondary/60 flex-shrink-0">
-                          📎 {msg.attachments.length}
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                ))
+                <div className="divide-y" style={{ borderColor: 'rgb(var(--line) / 0.2)' }}>
+                  {filteredMessages.map((msg) => (
+                    <MessageItem key={msg.id} msg={msg} selected={selectedId === msg.id} onSelect={() => handleSelectMessage(msg.id)} idx={0} query={searchQuery} />
+                  ))}
+                </div>
               )}
             </div>
           </div>
