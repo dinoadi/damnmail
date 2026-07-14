@@ -68,10 +68,11 @@ export default async ({ req, res, log, error }: any) => {
       return await handleCreateInbox(databases, body, res, error);
     }
 
-    // GET /api/inboxes/:address/messages
-    const msgMatch = path.match(/^\/api\/inboxes\/([^/]+)\/messages$/);
+    // GET /api/inboxes/:address/messages[/?q=...]
+    const msgMatch = path.match(/^\/api\/inboxes\/([^/]+)\/messages/);
     if (msgMatch && method === 'GET') {
-      return await handleListMessages(databases, storage, decodeURIComponent(msgMatch[1]), res, error);
+      const searchQuery = (body.q || query.q || '').trim();
+      return await handleListMessages(databases, storage, decodeURIComponent(msgMatch[1]), res, error, searchQuery);
     }
 
     // GET /api/inboxes/:address/stats
@@ -128,18 +129,26 @@ async function handleListDomains(databases: Databases, res: any) {
     }));
     return res.json({ success: true, data: domains });
   } catch (err) {
-    return res.json({ success: true, data: [] });
+    return res.json({ success: false, error: 'Failed to list domains' }, 500);
   }
 }
 // handleCreateInbox not used (we use fixed inbox all@readyonbooking.app)
 
-async function handleListMessages(databases: Databases, storage: Storage, addressLookup: string, res: any, error: any) {
+async function handleListMessages(databases: Databases, storage: Storage, addressLookup: string, res: any, error: any, searchQuery?: string) {
   try {
-    const queries: any[] = [Query.orderDesc('$createdAt'), Query.limit(200)];
+    const queries: any[] = [Query.orderDesc('$createdAt')];
     const username = addressLookup.includes('@') ? addressLookup.split('@')[0] : addressLookup;
     if (username !== 'all') {
       queries.unshift(Query.equal('inboxAddress', addressLookup));
     }
+
+    // When searching, fetch more documents for server-side content filtering
+    if (searchQuery) {
+      queries.unshift(Query.limit(1000));
+    } else {
+      queries.unshift(Query.limit(200));
+    }
+
     const result = await databases.listDocuments(DB_ID, COLL_EMAILS, queries);
 
     const messages = result.documents.map((d: any) => {
@@ -176,11 +185,44 @@ async function handleListMessages(databases: Databases, storage: Storage, addres
       };
       return msg;
     });
+
+    // Filter by search query (case-insensitive, across all text fields including body)
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const filtered = messages.filter((m: any) => {
+        const bodyText = m.html ? stripHtml(m.html) : (m.text || '');
+        const haystack = [
+          m.from || '',
+          m.to || '',
+          m.subject || '',
+          m.text || '',
+          bodyText,
+        ].join(' ').toLowerCase();
+        return haystack.includes(q);
+      });
+      return res.json({ success: true, data: filtered });
+    }
+
     return res.json({ success: true, data: messages });
   } catch (err: any) {
     error(`List messages error: ${err.message}`);
     return res.json({ success: false, error: 'Failed to list messages' }, 500);
   }
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 async function handleInboxStats(databases: Databases, storage: Storage, address: string, res: any, error: any) {
@@ -242,20 +284,7 @@ async function handleInboxStats(databases: Databases, storage: Storage, address:
     });
   } catch (err: any) {
     error(`Inbox stats error: ${err.message}`);
-    return res.json({
-      success: true,
-      data: {
-        inboxAddress: address,
-        totalEmails: 0,
-        totalAttachments: 0,
-        storageUsedBytes: 0,
-        storageLimit: 1024 * 1024 * 1024,
-        storageUsedFormatted: '0 B',
-        storageLimitFormatted: '1 GB',
-        usagePercent: 0,
-      },
-    });
-  }
+    return res.json({ success: false, error: 'Failed to get inbox stats' }, 500);
 }
 
 async function handleDeleteMessage(databases: Databases, storage: Storage, messageId: string, res: any, error: any) {
@@ -367,15 +396,7 @@ async function handleHealth(databases: Databases, res: any) {
       },
     });
   } catch (err: any) {
-    return res.json({
-      success: true,
-      data: {
-        service: 'damnmail',
-        checkedAt: new Date().toISOString(),
-        domains: [],
-      },
-    });
-  }
+    return res.json({ success: false, error: 'Health check failed' }, 500);
 }
 
 // ─── EMAIL WEBHOOK ──────────────────────────────────
@@ -411,7 +432,6 @@ async function handleEmailWebhook(databases: Databases, body: any, res: any, err
         username,
         domain,
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         telegramChatId: '',
       });
       log(`Auto-created inbox: ${inboxAddress}`);

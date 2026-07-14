@@ -8,9 +8,7 @@
             "runtime": "node-22",
             "path": "apps/functions/api",
             "entrypoint": "src/index.ts",
-            "execute": [
-                "any"
-            ],
+            "execute": ["any"],
             "enabled": true,
             "logging": true,
             "events": [],
@@ -18,12 +16,9 @@
             "timeout": 30,
             "commands": "npm install",
             "scopes": [
-                "databases.read",
-                "databases.write",
-                "documents.read",
-                "documents.write",
-                "collections.read",
-                "collections.write"
+                "databases.read", "databases.write",
+                "documents.read", "documents.write",
+                "collections.read", "collections.write"
             ],
             "buildSpecification": "s-0.5vcpu-512mb",
             "runtimeSpecification": "s-0.5vcpu-512mb",
@@ -35,9 +30,7 @@
             "runtime": "node-22",
             "path": "apps/functions/telegram-bot",
             "entrypoint": "src/index.ts",
-            "execute": [
-                "any"
-            ],
+            "execute": ["any"],
             "enabled": true,
             "logging": true,
             "events": [],
@@ -45,12 +38,9 @@
             "timeout": 30,
             "commands": "npm install",
             "scopes": [
-                "databases.read",
-                "databases.write",
-                "documents.read",
-                "documents.write",
-                "collections.read",
-                "collections.write"
+                "databases.read", "databases.write",
+                "documents.read", "documents.write",
+                "collections.read", "collections.write"
             ],
             "buildSpecification": "s-0.5vcpu-512mb",
             "runtimeSpecification": "s-0.5vcpu-512mb",
@@ -62,9 +52,7 @@
             "runtime": "node-22",
             "path": "apps/functions/process-email",
             "entrypoint": "src/index.ts",
-            "execute": [
-                "any"
-            ],
+            "execute": ["any"],
             "enabled": true,
             "logging": true,
             "events": [],
@@ -72,12 +60,9 @@
             "timeout": 30,
             "commands": "npm install",
             "scopes": [
-                "databases.read",
-                "databases.write",
-                "documents.read",
-                "documents.write",
-                "collections.read",
-                "collections.write"
+                "databases.read", "databases.write",
+                "documents.read", "documents.write",
+                "collections.read", "collections.write"
             ],
             "buildSpecification": "s-0.5vcpu-512mb",
             "runtimeSpecification": "s-0.5vcpu-512mb",
@@ -89,9 +74,7 @@
             "runtime": "node-22",
             "path": "apps/functions/cleanup",
             "entrypoint": "src/index.ts",
-            "execute": [
-                "any"
-            ],
+            "execute": ["any"],
             "enabled": true,
             "logging": true,
             "events": [],
@@ -99,12 +82,9 @@
             "timeout": 30,
             "commands": "npm install",
             "scopes": [
-                "databases.read",
-                "databases.write",
-                "documents.read",
-                "documents.write",
-                "collections.read",
-                "collections.write"
+                "databases.read", "databases.write",
+                "documents.read", "documents.write",
+                "collections.read", "collections.write"
             ],
             "buildSpecification": "s-0.5vcpu-512mb",
             "runtimeSpecification": "s-0.5vcpu-512mb",
@@ -115,10 +95,8 @@
             "name": "Test Env",
             "runtime": "node-22",
             "path": "apps/functions/test-env",
-            "entrypoint": "",
-            "execute": [
-                "any"
-            ],
+            "entrypoint": "src/index.ts",
+            "execute": ["any"],
             "enabled": true,
             "logging": true,
             "events": [],
@@ -126,10 +104,8 @@
             "timeout": 15,
             "commands": "",
             "scopes": [
-                "databases.read",
-                "databases.write",
-                "documents.read",
-                "documents.write"
+                "databases.read", "databases.write",
+                "documents.read", "documents.write"
             ],
             "buildSpecification": "s-0.5vcpu-512mb",
             "runtimeSpecification": "s-0.5vcpu-512mb",
@@ -140,15 +116,19 @@
             "name": "telegram-poller",
             "runtime": "node-22",
             "path": "apps/functions/telegram-poller",
-            "entrypoint": "",
-            "execute": [],
+            "entrypoint": "src/index.ts",
+            "execute": ["any"],
             "enabled": true,
             "logging": true,
             "events": [],
-            "schedule": "",
-            "timeout": 15,
-            "commands": "",
-            "scopes": [],
+            "schedule": "* * * * *",
+            "timeout": 30,
+            "commands": "npm install",
+            "scopes": [
+                "databases.read", "databases.write",
+                "documents.read", "documents.write",
+                "collections.read", "collections.write"
+            ],
             "buildSpecification": "s-0.5vcpu-512mb",
             "runtimeSpecification": "s-0.5vcpu-512mb",
             "deploymentRetention": 0
@@ -164,5 +144,19 @@
                 "functionId": "api"
             }
         ]
+    },
+    "sites": [
+    {
+      "$id": "dashboard",
+      "path": "./",
+      "name": "Damnmail Dashboard",
+      "framework": "other",
+      "enabled": true,
+      "logging": true,
+      "outputDirectory": "apps/frontend/out",
+      "installCommand": "pnpm install",
+      "buildCommand": "pnpm --filter @damnmail/frontend run build",
+      "deploymentRetention": 0
     }
+    ]
 }

@@ -109,22 +109,14 @@ export default async ({ req, res, log, error }: any) => {
     } else {
       log(`No existing inbox for ${inboxAddress}, auto-creating...`);
       const [localPart, domainName] = inboxAddress.split('@');
-      const ttlHours = parseInt(process.env.EMAIL_TTL_HOURS || '720', 10);
       inboxDoc = await databases.createDocument(DB_ID, COLL_INBOXES, 'unique()', {
         username: localPart,
         domain: domainName,
         address: inboxAddress,
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString(),
       });
       inboxCreated = true;
       log(`Auto-created inbox ${inboxAddress}`);
-    }
-
-    // Check if expired
-    const expiresAt = new Date(inboxDoc.expiresAt || inboxDoc.expiresAt);
-    if (expiresAt < new Date()) {
-      log(`Inbox ${inboxAddress} has expired, storing anyway.`);
     }
 
     // Process attachments

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 
 const EMAIL_DARK_CSS = '.dark .email-content *:not(img):not(svg):not(video):not(iframe):not(canvas){color:rgb(var(--ink))!important;background-color:transparent!important}.email-content img{max-width:100%!important;height:auto!important;border-radius:8px}.dark .email-content img{filter:brightness(0.9) contrast(1.15)}'
+const PASSWORD = process.env.NEXT_PUBLIC_SITE_PASSWORD || ''
 const INBOX_ADDRESS = 'all@readyonbooking.app'
 const POLL_INTERVAL = 5000
 const STATS_INTERVAL = 30000
@@ -126,7 +127,22 @@ function highlightText(text: string, query: string): ReactNode {
 }
 
 function copyToClipboard(text: string) {
-  if (navigator.clipboard) navigator.clipboard.writeText(text)
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
+  } else {
+    fallbackCopy(text)
+  }
+}
+
+function fallbackCopy(text: string) {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  document.execCommand('copy')
+  document.body.removeChild(ta)
 }
 
 // ─── Decorative Background ────────────────────────
@@ -155,7 +171,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (input.trim() === 'ZHAMBALA99') {
+    if (input.trim() === PASSWORD || !PASSWORD) {
       onUnlock()
       if (typeof window !== 'undefined') localStorage.setItem('damnmail_unlocked', 'true')
     } else {
@@ -549,31 +565,33 @@ function SearchBar({ value, onChange }: { value: string; onChange: (v: string) =
 // ─── API ──────────────────────────────────────────
 
 async function callApi<T = any>(method: string, path: string, body?: any): Promise<T> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://sgp.cloud.appwrite.io/v1/functions/api/executions'
-  const payload: Record<string, any> = { method, path: `/api${path}` }
-  if (body && method !== 'GET') payload.body = JSON.stringify(body)
-
-  const res = await fetch(baseUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Appwrite-Project': 'damnmail' },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) throw new Error(`API request failed: ${res.status}`)
-
-  const execution = await res.json()
-  if (execution.status !== 'completed') throw new Error(`Function execution gagal: ${execution.status}`)
-  if (execution.responseStatusCode < 200 || execution.responseStatusCode >= 300) {
-    const parsed = JSON.parse(execution.responseBody)
-    throw new Error(parsed.error || `API error: ${execution.responseStatusCode}`)
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || ''
+  const url = `${baseUrl.replace(/\/+$/, '')}/api${path}`
+  const options: RequestInit = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
   }
-  const result = JSON.parse(execution.responseBody)
-  if (!result.success) throw new Error(result.error || 'API error')
+  if (body && method !== 'GET') {
+    options.body = JSON.stringify(body)
+  }
+
+  const res = await fetch(url, options)
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status}`)
+  }
+
+  const result = await res.json()
+  if (!result.success) {
+    throw new Error(result.error || 'API error')
+  }
+
   return result.data as T
 }
 
-async function fetchMessages(): Promise<Email[]> {
+async function fetchMessages(_searchQuery?: string): Promise<Email[]> {
   try {
-    const data = await callApi<Email[]>('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`)
+    let path = `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`
+    const data = await callApi<Email[]>('GET', path)
     return Array.isArray(data) ? data : []
   } catch { return [] }
 }
@@ -623,11 +641,11 @@ export default function Home() {
 
   useEffect(() => {
     if (locked) return
-    const poll = async () => { const data = await fetchMessages(); setMessages(data); setLoading(false) }
+    const poll = async () => { const data = await fetchMessages(searchQuery); setMessages(data); setLoading(false) }
     poll()
     const interval = setInterval(poll, POLL_INTERVAL)
     return () => clearInterval(interval)
-  }, [locked])
+  }, [locked, searchQuery])
 
   useEffect(() => {
     if (locked) return
