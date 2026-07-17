@@ -92,7 +92,7 @@ export class PrismaStorageAdapter implements StorageAdapter {
     include: {
       emails: {
 skip: offset,
-        take: limit } : {}),
+take: limit } : {}),
         include: { attachments: true },
         orderBy: { receivedAt: 'desc' }
       }
