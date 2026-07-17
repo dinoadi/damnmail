@@ -4,6 +4,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "noEmit": false,
+    "module": "CommonJS",
     "types": ["node"]
   },
     "include": ["src/**/*.ts"]
