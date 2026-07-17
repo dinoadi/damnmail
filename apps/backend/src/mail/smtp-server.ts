@@ -99,3 +99,4 @@ export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
       })
     }
   })
+}
