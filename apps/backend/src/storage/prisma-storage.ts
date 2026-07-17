@@ -87,27 +87,23 @@ export class PrismaStorageAdapter implements StorageAdapter {
   async listMessages(address: string, options?: { limit?: number; offset?: number; search?: string }): Promise<EmailMessage[]> {
     const { limit = 1000, offset = 0, search } = options || {}
   
-    const whereClause: any = { address }
-    if (search?.trim()) {
-      const term = search.trim()
-      whereClause.emails = {
-        some: {
-          OR: [
-            { subject: { contains: term, mode: 'insensitive' } },
-            { from: { contains: term, mode: 'insensitive' } },
-            { to: { contains: term, mode: 'insensitive' } },
-            { text: { contains: term, mode: 'insensitive' } },
-            { html: { contains: term, mode: 'insensitive' } }
-          ]
-        }
-      }
-    }
+    const emailWhere: any = search?.trim() ? {
+      OR: [
+        { subject: { contains: search.trim(), mode: 'insensitive' } },
+        { from: { contains: search.trim(), mode: 'insensitive' } },
+        { to: { contains: search.trim(), mode: 'insensitive' } },
+        { text: { contains: search.trim(), mode: 'insensitive' } },
+        { html: { contains: search.trim(), mode: 'insensitive' } }
+      ]
+    } : undefined
   
     const inbox = await this.prisma.inbox.findUnique({
-      where: whereClause,
+      where: { address },
       include: {
         emails: {
-          ...(options ? { skip: offset, take: limit } : {}),
+          where: emailWhere,
+          skip: offset,
+          take: limit,
           include: { attachments: true },
           orderBy: { receivedAt: 'desc' }
         }
