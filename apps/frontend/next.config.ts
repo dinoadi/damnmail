@@ -1,5 +1,6 @@
 const nextConfig = {
   output: 'export',
+
   reactStrictMode: true,
   eslint: {
     ignoreDuringBuilds: true
@@ -14,7 +15,7 @@ const nextConfig = {
     unoptimized: true
   },
   env: {
-    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL || '/api/proxy'
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL || ''
   }
 }
 

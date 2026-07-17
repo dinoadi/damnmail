@@ -4,9 +4,19 @@ import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } fro
 
 const EMAIL_DARK_CSS = '.dark .email-content *:not(img):not(svg):not(video):not(iframe):not(canvas){color:rgb(var(--ink))!important;background-color:transparent!important}.email-content img{max-width:100%!important;height:auto!important;border-radius:8px}.dark .email-content img{filter:brightness(0.9) contrast(1.15)}'
 const PASSWORD = process.env.NEXT_PUBLIC_SITE_PASSWORD || ''
-const INBOX_ADDRESS = 'all@readyonbooking.app'
-const POLL_INTERVAL = 5000
-const STATS_INTERVAL = 30000
+let INBOX_ADDRESS = 'all@readyonbooking.app' // will be set from URL param in component
+function getInboxParam(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      const p = new URLSearchParams(window.location.search)
+      const v = p.get('inbox')
+      if (v && v.includes('@')) return v.trim().toLowerCase()
+    } catch {}
+  }
+  return 'all@readyonbooking.app'
+}
+const POLL_INTERVAL = 60000  // 1 menit
+const STATS_INTERVAL = 120000 // 2 menit
 
 // ─── Types ────────────────────────────────────────
 
@@ -445,7 +455,7 @@ function EmailDetail({ email, onClose, onDelete }: { email: Email; onClose: () =
   )
 }
 
-function EmptyState() {
+function EmptyState({ inboxAddr }: { inboxAddr: string }) {
   return (
     <div className="flex-1 flex items-center justify-center">
       <div className="text-center px-6 py-12 animate-fade-in">
@@ -454,7 +464,7 @@ function EmptyState() {
         </div>
         <h3 className="text-lg font-semibold mb-1" style={{ color: 'rgb(var(--ink))' }}>Inbox Kosong</h3>
         <p className="text-sm max-w-xs mx-auto" style={{ color: 'rgb(var(--ink-secondary) / 0.8)' }}>
-          Belum ada email yang masuk ke <span className="font-medium" style={{ color: 'rgb(var(--ink))' }}>{INBOX_ADDRESS}</span>
+          Belum ada email yang masuk ke <span className="font-medium" style={{ color: 'rgb(var(--ink))' }}>{inboxAddr}</span>
         </p>
         <p className="text-xs mt-3" style={{ color: 'rgb(var(--ink-secondary) / 0.5)' }}>
           Email akan muncul secara otomatis ✈️
@@ -588,23 +598,24 @@ async function callApi<T = any>(method: string, path: string, body?: any): Promi
   return result.data as T
 }
 
-async function fetchMessages(_searchQuery?: string): Promise<Email[]> {
+async function fetchMessages(inboxAddr: string, searchQuery?: string): Promise<Email[]> {
   try {
-    let path = `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/messages`
+    const params = new URLSearchParams()
+    params.set('limit', '50')
+    if (searchQuery && searchQuery.trim().length >= 2) {
+      params.set('search', searchQuery.trim())
+    }
+    const path = '/inboxes/' + encodeURIComponent(inboxAddr) + '/messages?' + params.toString()
     const data = await callApi<Email[]>('GET', path)
     return Array.isArray(data) ? data : []
   } catch { return [] }
 }
 
-async function fetchStats(): Promise<StorageStats | null> {
-  try { return (await callApi<StorageStats>('GET', `/inboxes/${encodeURIComponent(INBOX_ADDRESS)}/stats`)) || null }
+async function fetchMessageDetail(messageId: string): Promise<Email | null> {
+  try { return await callApi<Email>('GET', '/messages/' + messageId) || null }
   catch { return null }
 }
 
-async function deleteMessage(messageId: string): Promise<boolean> {
-  try { await callApi('DELETE', `/messages/${messageId}`); return true }
-  catch { return false }
-}
 
 // ─── Main Page ────────────────────────────────────
 
@@ -612,17 +623,19 @@ export default function Home() {
   const [locked, setLocked] = useState(true)
   const [messages, setMessages] = useState<Email[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [inboxAddr, setInboxAddr] = useState('all@readyonbooking.app')
   const [stats, setStats] = useState<StorageStats | null>(null)
   const [copied, setCopied] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const selectedEmail = messages.find((m) => m.id === selectedId) || null
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
 
   // Precompute a lowercase searchable blob per message (includes the full email body).
   const searchBlobs = useMemo(() => {
     const map = new Map<string, string>()
     for (const m of messages) {
-      const body = m.html ? stripHtmlToText(m.html) : (m.text || '')
+      const body = m.text || stripHtmlToText(m.html || '')
       const blob = [m.from, m.subject, m.text, m.snippet, body].join(' ').toLowerCase()
       map.set(m.id, blob)
     }
@@ -635,41 +648,88 @@ export default function Home() {
     return messages.filter((m) => (searchBlobs.get(m.id) || '').includes(q))
   }, [messages, searchQuery, searchBlobs])
 
+  // Read ?inbox= from URL on mount + handle unlocked state
   useEffect(() => {
+    const param = getInboxParam()
+    if (param !== 'all@readyonbooking.app') setInboxAddr(param)
     if (typeof window !== 'undefined' && localStorage.getItem('damnmail_unlocked') === 'true') setLocked(false)
   }, [])
 
+  // Sync INBOX_ADDRESS module variable for helper functions
+  useEffect(() => { INBOX_ADDRESS = inboxAddr }, [inboxAddr])
+
+  // Polling untuk real-time messages (Appwrite Functions gak support SSE persistent connection)
   useEffect(() => {
     if (locked) return
-    const poll = async () => { const data = await fetchMessages(searchQuery); setMessages(data); setLoading(false) }
-    poll()
-    const interval = setInterval(poll, POLL_INTERVAL)
-    return () => clearInterval(interval)
-  }, [locked, searchQuery])
+    let cancelled = false
+
+    const doFetch = async () => {
+      const data = await fetchMessages(inboxAddr, searchQuery)
+      if (!cancelled) {
+        setMessages(data)
+        setLoading(false)
+      }
+    }
+
+    // Initial fetch
+    doFetch()
+
+    // Polling — lebih jarang saat search karena query-nya lebih berat
+    const interval = setInterval(doFetch, searchQuery.trim() ? POLL_INTERVAL * 2 : POLL_INTERVAL)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [locked, searchQuery, inboxAddr])
 
   useEffect(() => {
     if (locked) return
-    const poll = async () => { const data = await fetchStats(); setStats(data) }
+    const poll = async () => { const data = await fetchStats(inboxAddr); setStats(data) }
     poll()
     const interval = setInterval(poll, STATS_INTERVAL)
     return () => clearInterval(interval)
-  }, [locked])
+  }, [locked, inboxAddr])
 
-  const handleUnlock = useCallback(() => setLocked(false), [])
-  const handleSelectMessage = useCallback((id: string) => setSelectedId((prev) => (prev === id ? null : id)), [])
-  const handleCloseDetail = useCallback(() => setSelectedId(null), [])
-  const handleDeleteMessage = useCallback(async () => {
+  // Fetch selected message detail
+  useEffect(function() {
+    if (!selectedId) {
+      setSelectedEmail(null)
+      return
+    }
+    var cached = messages.find(function(m) { return m.id === selectedId })
+    if (cached && cached.html) {
+      setSelectedEmail(cached)
+      return
+    }
+    setDetailLoading(true)
+    fetchMessageDetail(selectedId).then(function(detail) {
+      if (detail && detail.html) {
+        setMessages(function(prev) { return prev.map(function(m) { return m.id === detail.id ? detail : m }) })
+        setSelectedEmail(detail)
+      } else if (detail) {
+        setSelectedEmail(detail)
+      }
+      setDetailLoading(false)
+    })
+  }, [selectedId])
+
+  const handleUnlock = useCallback(function() { setLocked(false) }, [])
+  const handleSelectMessage = useCallback(function(id: string) { setSelectedId(function(prev) { return prev === id ? null : id }) }, [])
+  const handleCloseDetail = useCallback(function() { setSelectedId(null) }, [])
+  const handleDeleteMessage = useCallback(async function() {
     if (!selectedEmail) return
     if (await deleteMessage(selectedEmail.id)) {
-      setMessages((prev) => prev.filter((m) => m.id !== selectedEmail.id))
+      setMessages(function(prev) { return prev.filter(function(m) { return m.id !== selectedEmail.id }) })
       setSelectedId(null)
-      const freshStats = await fetchStats()
+      setSelectedEmail(null)
+      var freshStats = await fetchStats(inboxAddr)
       if (freshStats) setStats(freshStats)
     }
-  }, [selectedEmail?.id])
+  }, [selectedEmail?.id, inboxAddr])
 
   const handleCopy = async () => {
-    await copyToClipboard(INBOX_ADDRESS)
+    await copyToClipboard(inboxAddr)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -706,7 +766,7 @@ export default function Home() {
               }}
               title="Klik untuk copy"
             >
-              <span className="truncate">{INBOX_ADDRESS}</span>
+              <span className="truncate">{inboxAddr}</span>
               {copied ? (
                 <span className="font-medium flex-shrink-0" style={{ color: 'rgb(var(--accent))' }}>Tersalin!</span>
               ) : (
@@ -756,7 +816,7 @@ export default function Home() {
                     </div>
                   </div>
                 ) : (
-                  <EmptyState />
+                  <EmptyState inboxAddr={inboxAddr} />
                 )
               ) : (
                 <div className="divide-y" style={{ borderColor: 'rgb(var(--line) / 0.2)' }}>
@@ -784,7 +844,7 @@ export default function Home() {
                     </div>
                   </div>
                 ) : (
-                  <EmptyState />
+                  <EmptyState inboxAddr={inboxAddr} />
                 )
               ) : (
                 <div className="divide-y" style={{ borderColor: 'rgb(var(--line) / 0.2)' }}>

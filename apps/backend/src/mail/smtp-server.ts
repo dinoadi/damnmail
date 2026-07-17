@@ -16,17 +16,26 @@ interface BuildSmtpServerOptions {
 }
 
 export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
+  const log = (msg: string) => console.log(`[SMTP] ${msg}`)
+  const logError = (msg: string) => console.error(`[SMTP] ${msg}`)
+
   return new SMTPServer({
     disabledCommands: ['AUTH', 'STARTTLS'],
     name: 'mail.readyonbooking.app',
     banner: 'DamnMail SMTP ready',
+    logger: (line: string) => log(line),
+    onConnect(session, callback) {
+      log(`Connection from ${session.remoteAddress || 'unknown'}`)
+      callback()
+    },
     onRcptTo(address, _session, callback) {
       const domain = normalizeDomain(address.address.split('@')[1] ?? '')
       if (!options.domainService.isAllowedDomain(domain)) {
+        logError(`Rejected RCPT: ${address.address} (domain ${domain} not active)`)
         callback(new Error(`Domain ${domain} is not active`))
         return
       }
-
+      log(`Accepted RCPT: ${address.address}`)
       callback()
     },
     onData(stream, session, callback) {
@@ -35,13 +44,10 @@ export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
       stream.on('end', async () => {
         try {
           const rawEmail = Buffer.concat(chunks)
+          log(`Processing email (${rawEmail.length} bytes)`)
           const parsedEmail = await parseIncomingEmail(rawEmail)
-
-          // Resolve catch-all inbox address
           const primaryDomain = options.env.domains[0]
           const catchAllAddress = options.env.CATCH_ALL_ADDRESS || `all@${primaryDomain}`
-
-          // Ensure catch-all inbox exists
           let catchAllInbox = await options.inboxService.getInbox(catchAllAddress)
           if (!catchAllInbox) {
             const [localPart, domain] = catchAllAddress.split('@')
@@ -50,8 +56,6 @@ export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
               domain: normalizeDomain(domain)
             })
           }
-
-          // Process attachments once
           const storedAttachments = [] as Array<{ id: string; filename: string; contentType: string; size: number; storagePath: string }>
           for (const attachment of parsedEmail.attachments) {
             const storagePath = await writeAttachmentToDisk(options.env.ATTACHMENT_STORAGE_DIR, attachment.filename, attachment.content)
@@ -63,8 +67,6 @@ export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
               storagePath
             })
           }
-
-          // Store email once in catch-all inbox
           const createdMessage = await options.inboxService.addMessage(
             catchAllAddress,
             {
@@ -79,19 +81,21 @@ export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
             },
             storedAttachments
           )
-
           options.eventBus.publish({
             type: 'email-received',
             inboxAddress: catchAllAddress,
             message: createdMessage
           })
-
+          log(`Email stored: ${parsedEmail.subject || '(no subject)'}`)
           callback()
         } catch (error) {
+          logError(`Failed to process email: ${error instanceof Error ? error.message : 'Unknown error'}`)
           callback(error instanceof Error ? error : new Error('Failed to process email'))
         }
       })
-      stream.on('error', callback)
+      stream.on('error', (err) => {
+        logError(`Stream error: ${err.message}`)
+        callback(err)
+      })
     }
   })
-}
