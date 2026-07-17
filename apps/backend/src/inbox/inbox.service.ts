@@ -31,9 +31,13 @@ export class InboxService {
     return this.storage.getInbox(address)
   }
 
-  async listMessages(address: string): Promise<EmailMessage[]> {
-    return this.storage.listMessages(address)
-  }
+  async listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
+  return this.storage.listMessages(address, options)
+}
+
+async getMessage(messageId: string): Promise<EmailMessage | undefined> {
+  return this.storage.getMessage(messageId)
+}
 
   async addMessage(
     address: string,

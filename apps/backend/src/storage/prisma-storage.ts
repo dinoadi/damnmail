@@ -84,40 +84,76 @@ export class PrismaStorageAdapter implements StorageAdapter {
     }
   }
 
-  async listMessages(address: string): Promise<EmailMessage[]> {
-    const inbox = await this.prisma.inbox.findUnique({
-      where: { address },
-      include: {
-        emails: {
-          include: { attachments: true },
-          orderBy: { receivedAt: 'desc' }
-        }
+  async listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
+  const { limit = 50, offset = 0 } = options || {}
+
+  const inbox = await this.prisma.inbox.findUnique({
+    where: { address },
+    include: {
+      emails: {
+skip: offset,
+        take: limit } : {}),
+        include: { attachments: true },
+        orderBy: { receivedAt: 'desc' }
       }
-    })
-
-    if (!inbox) {
-      return []
     }
+  })
 
-    return inbox.emails.map((email) => ({
-      id: email.id,
-      inboxAddress: inbox.address,
-      from: email.from,
-      to: email.to,
-      subject: email.subject,
-      html: email.html ?? undefined,
-      text: email.text ?? undefined,
-      snippet: email.snippet,
-      receivedAt: email.receivedAt.toISOString(),
-      attachments: email.attachments.map((attachment) => ({
-        id: attachment.id,
-        filename: attachment.filename,
-        contentType: attachment.contentType,
-        size: attachment.size,
-        downloadUrl: `/api/attachments/${attachment.id}`
-      }))
+  if (!inbox) {
+    return []
+  }
+
+  return inbox.emails.map((email) => ({
+    id: email.id,
+    inboxAddress: inbox.address,
+    from: email.from,
+    to: email.to,
+    subject: email.subject,
+    html: undefined,
+    text: email.text ?? undefined,
+    snippet: email.snippet,
+    receivedAt: email.receivedAt.toISOString(),
+    attachments: email.attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      downloadUrl: `/api/attachments/${attachment.id}`
+    }))
+  }))
+}
+
+async getMessage(messageId: string): Promise<EmailMessage | undefined> {
+  const email = await this.prisma.email.findUnique({
+    where: { id: messageId },
+    include: { attachments: true, inbox: true }
+  })
+
+  if (!email) {
+    return undefined
+  }
+
+  return {
+    id: email.id,
+    inboxAddress: email.inbox.address,
+    from: email.from,
+    to: email.to,
+    subject: email.subject,
+    html: email.html ?? undefined,
+    text: email.text ?? undefined,
+    snippet: email.snippet,
+    receivedAt: email.receivedAt.toISOString(),
+    attachments: email.attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      size: attachment.size,
+      downloadUrl: `/api/attachments/${attachment.id}`
     }))
   }
+}
+
+
 
   async addMessage(
     address: string,
@@ -177,8 +213,16 @@ export class PrismaStorageAdapter implements StorageAdapter {
     const attachment = await this.prisma.attachment.findUnique({ where: { id: attachmentId } })
     return attachment ?? undefined
   }
-
   async cleanupExpired(): Promise<void> {
-    await this.prisma.inbox.deleteMany({ where: { expiresAt: { lte: new Date() } } })
+    // Unlimited - no expiration
+  }
+
+  async deleteMessage(messageId: string): Promise<boolean> {
+    try {
+      await this.prisma.email.delete({ where: { id: messageId } })
+      return true
+    } catch {
+      return false
+    }
   }
 }

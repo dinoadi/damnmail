@@ -10,7 +10,7 @@ import { createInboxSchema, upsertDomainSchema } from './schemas'
 import { streamInboxEvents } from '../realtime/sse'
 import { buildHealthCheck } from '../health/health.service'
 import { normalizeDomain } from '@damnmail/shared'
-import { extractAdminApiKey, sendAttachmentFile } from './helpers'
+import { extractAdminApiKey, sendAttachmentFile, formatBytes } from './helpers'
 
 interface BuildApiServerOptions {
   env: AppEnv
@@ -29,10 +29,21 @@ export async function buildApiServer(options: BuildApiServerOptions) {
   await app.register(cors, { origin: allowedOrigins })
   await app.register(sensible)
 
+  // Wrap all successful responses with { success, data }
+  app.addHook('preSerialization', async (request, _reply, payload) => {
+    if (request.url.includes('/stream') || request.url.includes('/attachment')) return payload
+    if (payload !== null && typeof payload === 'object' && !('success' in payload)) {
+      return { success: true, data: payload }
+    }
+    return payload
+  })
+
+  // ─── Public API ──────────────────────────────────────
+
   app.get('/api/domains', async () => {
     const domains = await options.storage.listActiveDomains()
     options.domainService.syncDomains(domains)
-    return { domains }
+    return domains
   })
 
   app.post('/api/inboxes', async (request, reply) => {
@@ -56,9 +67,30 @@ export async function buildApiServer(options: BuildApiServerOptions) {
   })
 
   app.get('/api/inboxes/:address/messages', async (request) => {
+    const params = request.params as { address: string }
+    const query = request.query as { limit?: string; offset?: string }
+    const limit = query.limit ? parseInt(query.limit, 10) : 50
+    const offset = query.offset ? parseInt(query.offset, 10) : 0
+    return options.inboxService.listMessages(params.address, { limit, offset })
+  })
+
+  app.get('/api/inboxes/:address/stats', async (request) => {
     const address = (request.params as { address: string }).address
+    const messages = await options.inboxService.listMessages(address, { limit: 0 })
+    const totalEmails = messages.length
+    const totalAttachments = messages.reduce((sum, m) => sum + (m.attachments?.length || 0), 0)
+    const storageUsedBytes = messages.reduce((sum, m) => sum + (m.attachments?.reduce((s, a) => s + a.size, 0) || 0), 0)
+    const storageLimit = 2 * 1024 * 1024 * 1024
+
     return {
-      messages: await options.inboxService.listMessages(address)
+      inboxAddress: address,
+      totalEmails,
+      totalAttachments,
+      storageUsedBytes,
+      storageLimit,
+      storageUsedFormatted: formatBytes(storageUsedBytes),
+      storageLimitFormatted: '2 GB',
+      usagePercent: Math.min((storageUsedBytes / storageLimit) * 100, 100),
     }
   })
 
@@ -66,6 +98,24 @@ export async function buildApiServer(options: BuildApiServerOptions) {
     const address = (request.params as { address: string }).address
     streamInboxEvents(reply, address, options.eventBus)
     return reply
+  })
+
+  app.delete('/api/messages/:messageId', async (request, reply) => {
+    const messageId = (request.params as { messageId: string }).messageId
+    const deleted = await options.storage.deleteMessage(messageId)
+    if (!deleted) {
+      return reply.notFound('Message not found')
+    }
+    return { deleted: true }
+  })
+
+  app.get('/api/messages/:messageId', async (request, reply) => {
+    const messageId = (request.params as { messageId: string }).messageId
+    const message = await options.inboxService.getMessage(messageId)
+    if (!message) {
+      return reply.notFound('Message not found')
+    }
+    return message
   })
 
   app.get('/api/attachments/:attachmentId', async (request, reply) => {
@@ -78,6 +128,8 @@ export async function buildApiServer(options: BuildApiServerOptions) {
 
     await sendAttachmentFile(reply, attachment.storagePath, attachment.filename, attachment.contentType)
   })
+
+  // ─── Admin API ───────────────────────────────────────
 
   app.addHook('preHandler', async (request, reply) => {
     if (!request.url.startsWith('/api/admin')) {

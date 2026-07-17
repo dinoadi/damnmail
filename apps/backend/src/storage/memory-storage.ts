@@ -76,9 +76,11 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return this.inboxes.get(address)
   }
 
-  async listMessages(address: string): Promise<EmailMessage[]> {
-    return this.messages.get(address) ?? []
-  }
+  async listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
+  const { limit = 50, offset = 0 } = options || {}
+  const all = this.messages.get(address) ?? []
+  const selected = limit > 0 ? all.slice(offset, offset + limit) : all
+}
 
   async addMessage(
     address: string,
@@ -112,18 +114,28 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 
   async cleanupExpired(): Promise<void> {
-    const now = Date.now()
-    for (const [address, inbox] of this.inboxes.entries()) {
-      if (new Date(inbox.expiresAt).getTime() > now) {
-        continue
-      }
-
-      this.inboxes.delete(address)
-      this.messages.delete(address)
-    }
+    // Unlimited - no expiration
   }
-}
 
+  async deleteMessage(messageId: string): Promise<boolean> {
+    for (const [, inboxMessages] of this.messages) {
+      const idx = inboxMessages.findIndex((m) => m.id === messageId)
+      if (idx !== -1) {
+        inboxMessages.splice(idx, 1)
+        return true
+      }
+    }
+    return false
+  }
+
+async getMessage(messageId: string): Promise<EmailMessage | undefined> {
+  for (const [, inboxMessages] of this.messages) {
+    const msg = inboxMessages.find(function(m) { return m.id === messageId })
+    if (msg) return msg
+  }
+  return undefined
+}
+}
 export async function writeAttachmentToDisk(baseDirectory: string, filename: string, content: Buffer): Promise<string> {
   const safeFilename = `${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`
   await fs.mkdir(baseDirectory, { recursive: true })

@@ -11,7 +11,7 @@ export interface StorageAdapter {
     telegramChatId?: string
   }): Promise<InboxAddress>
   getInbox(address: string): Promise<InboxAddress | undefined>
-  listMessages(address: string): Promise<EmailMessage[]>
+  listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]>
   addMessage(
     address: string,
     message: Omit<EmailMessage, 'id' | 'snippet'>,
@@ -25,4 +25,7 @@ export interface StorageAdapter {
     storagePath: string
   } | undefined>
   cleanupExpired(): Promise<void>
+  deleteMessage(messageId: string): Promise<boolean>
+  getMessage(messageId: string): Promise<EmailMessage | undefined>
+}
 }
