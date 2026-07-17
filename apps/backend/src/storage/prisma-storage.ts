@@ -84,42 +84,58 @@ export class PrismaStorageAdapter implements StorageAdapter {
     }
   }
 
-  async listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
-  const { limit = 1000, offset = 0 } = options || {}
-
-  const inbox = await this.prisma.inbox.findUnique({
-    where: { address },
-    include: {
-      emails: {
-        ...(options ? { skip: offset, take: limit } : {}),
-        include: { attachments: true },
-        orderBy: { receivedAt: 'desc' }
+  async listMessages(address: string, options?: { limit?: number; offset?: number; search?: string }): Promise<EmailMessage[]> {
+    const { limit = 1000, offset = 0, search } = options || {}
+  
+    const whereClause: any = { address }
+    if (search?.trim()) {
+      const term = search.trim()
+      whereClause.emails = {
+        some: {
+          OR: [
+            { subject: { contains: term, mode: 'insensitive' } },
+            { from: { contains: term, mode: 'insensitive' } },
+            { to: { contains: term, mode: 'insensitive' } },
+            { text: { contains: term, mode: 'insensitive' } },
+            { html: { contains: term, mode: 'insensitive' } }
+          ]
+        }
       }
     }
-  })
-
-  if (!inbox) {
-    return []
-  }
-
-  return inbox.emails.map((email) => ({
-    id: email.id,
-    inboxAddress: inbox.address,
-    from: email.from,
-    to: email.to,
-    subject: email.subject,
-    html: undefined,
-    text: email.text ?? undefined,
-    snippet: email.snippet,
-    receivedAt: email.receivedAt.toISOString(),
-    attachments: email.attachments.map((attachment) => ({
-      id: attachment.id,
-      filename: attachment.filename,
-      contentType: attachment.contentType,
-      size: attachment.size,
-      downloadUrl: `/api/attachments/${attachment.id}`
+  
+    const inbox = await this.prisma.inbox.findUnique({
+      where: whereClause,
+      include: {
+        emails: {
+          ...(options ? { skip: offset, take: limit } : {}),
+          include: { attachments: true },
+          orderBy: { receivedAt: 'desc' }
+        }
+      }
+    })
+  
+    if (!inbox) {
+      return []
+    }
+  
+    return inbox.emails.map((email) => ({
+      id: email.id,
+      inboxAddress: inbox.address,
+      from: email.from,
+      to: email.to,
+      subject: email.subject,
+      html: undefined,
+      text: email.text ?? undefined,
+      snippet: email.snippet,
+      receivedAt: email.receivedAt.toISOString(),
+      attachments: email.attachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        size: attachment.size,
+        downloadUrl: `/api/attachments/${attachment.id}`
+      }))
     }))
-  }))
 }
 
   async countMessages(address: string): Promise<number> {

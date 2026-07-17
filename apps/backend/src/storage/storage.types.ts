@@ -11,7 +11,7 @@ export interface StorageAdapter {
     telegramChatId?: string
   }): Promise<InboxAddress>
   getInbox(address: string): Promise<InboxAddress | undefined>
-  listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]>
+  listMessages(address: string, options?: { limit?: number; offset?: number; search?: string }): Promise<EmailMessage[]>
   countMessages(address: string): Promise<number>
   countAttachments(address: string): Promise<number>
   getStorageUsedBytes(address: string): Promise<number>

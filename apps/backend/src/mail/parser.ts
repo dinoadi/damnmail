@@ -39,9 +39,30 @@ export async function parseIncomingEmail(raw: Buffer): Promise<ParsedEmailConten
   const from = formatAddress(parsedMail.from)
   const to = formatAddress(parsedMail.to)
   const subject = parsedMail.subject?.trim() || '(No subject)'
-  const html = typeof parsedMail.html === 'string' ? parsedMail.html : undefined
-  const text = parsedMail.text?.trim() || undefined
+  let html = typeof parsedMail.html === 'string' ? parsedMail.html : undefined
+  let text = parsedMail.text?.trim() || undefined
   const attachments = parsedMail.attachments.map(convertAttachment)
+
+  // If no html/text content found, try extracting from nested message/rfc822 attachments
+  // (e.g., bounce reports, forwarded emails where content is in the attached original message)
+  if (!html && !text) {
+    for (const att of parsedMail.attachments) {
+      if (att.contentType === 'message/rfc822' && att.content.length > 0) {
+        try {
+          const nestedMail = await simpleParser(att.content)
+          if (!html && typeof nestedMail.html === 'string') {
+            html = nestedMail.html
+          }
+          if (!text && nestedMail.text?.trim()) {
+            text = nestedMail.text.trim()
+          }
+          if (html || text) break
+        } catch {
+          // Skip unparseable nested messages
+        }
+      }
+    }
+  }
 
   return {
     from,

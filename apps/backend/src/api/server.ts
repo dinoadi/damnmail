@@ -68,10 +68,10 @@ export async function buildApiServer(options: BuildApiServerOptions) {
 
   app.get('/api/inboxes/:address/messages', async (request) => {
     const params = request.params as { address: string }
-    const query = request.query as { limit?: string; offset?: string }
-    const limit = query.limit ? parseInt(query.limit, 10) : 50
+    const query = request.query as { limit?: string; offset?: string; search?: string }
+    const limit = query.limit ? parseInt(query.limit, 10) : 1000
     const offset = query.offset ? parseInt(query.offset, 10) : 0
-    return options.inboxService.listMessages(params.address, { limit, offset })
+    return options.inboxService.listMessages(params.address, { limit, offset, search: query.search })
   })
 
   app.get('/api/inboxes/:address/stats', async (request) => {
