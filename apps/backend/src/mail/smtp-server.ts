@@ -35,51 +35,55 @@ export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
         try {
           const rawEmail = Buffer.concat(chunks)
           const parsedEmail = await parseIncomingEmail(rawEmail)
-          const recipients = session.envelope.rcptTo.map((recipient) => recipient.address)
 
-          for (const recipient of recipients) {
-            let inbox = await options.inboxService.getInbox(recipient)
-            if (!inbox) {
-              const [localPart, domain] = recipient.split('@')
-              inbox = await options.inboxService.createInbox({
-                username: localPart,
-                domain: normalizeDomain(domain)
-              })
-            }
+          // Resolve catch-all inbox address
+          const primaryDomain = options.env.domains[0]
+          const catchAllAddress = options.env.CATCH_ALL_ADDRESS || `all@${primaryDomain}`
 
-            const storedAttachments = [] as Array<{ id: string; filename: string; contentType: string; size: number; storagePath: string }>
-            for (const attachment of parsedEmail.attachments) {
-              const storagePath = await writeAttachmentToDisk(options.env.ATTACHMENT_STORAGE_DIR, attachment.filename, attachment.content)
-              storedAttachments.push({
-                id: createId('att'),
-                filename: attachment.filename,
-                contentType: attachment.contentType,
-                size: attachment.size,
-                storagePath
-              })
-            }
-
-            const createdMessage = await options.inboxService.addMessage(
-              recipient,
-              {
-                inboxAddress: recipient,
-                from: parsedEmail.from,
-                to: parsedEmail.to,
-                subject: parsedEmail.subject,
-                html: sanitizeEmailHtml(parsedEmail.html),
-                text: parsedEmail.text,
-                receivedAt: new Date().toISOString(),
-                attachments: []
-              },
-              storedAttachments
-            )
-
-            options.eventBus.publish({
-              type: 'email-received',
-              inboxAddress: recipient,
-              message: createdMessage
+          // Ensure catch-all inbox exists
+          let catchAllInbox = await options.inboxService.getInbox(catchAllAddress)
+          if (!catchAllInbox) {
+            const [localPart, domain] = catchAllAddress.split('@')
+            catchAllInbox = await options.inboxService.createInbox({
+              username: localPart,
+              domain: normalizeDomain(domain)
             })
           }
+
+          // Process attachments once
+          const storedAttachments = [] as Array<{ id: string; filename: string; contentType: string; size: number; storagePath: string }>
+          for (const attachment of parsedEmail.attachments) {
+            const storagePath = await writeAttachmentToDisk(options.env.ATTACHMENT_STORAGE_DIR, attachment.filename, attachment.content)
+            storedAttachments.push({
+              id: createId('att'),
+              filename: attachment.filename,
+              contentType: attachment.contentType,
+              size: attachment.size,
+              storagePath
+            })
+          }
+
+          // Store email once in catch-all inbox
+          const createdMessage = await options.inboxService.addMessage(
+            catchAllAddress,
+            {
+              inboxAddress: catchAllAddress,
+              from: parsedEmail.from,
+              to: parsedEmail.to,
+              subject: parsedEmail.subject,
+              html: sanitizeEmailHtml(parsedEmail.html),
+              text: parsedEmail.text,
+              receivedAt: new Date().toISOString(),
+              attachments: []
+            },
+            storedAttachments
+          )
+
+          options.eventBus.publish({
+            type: 'email-received',
+            inboxAddress: catchAllAddress,
+            message: createdMessage
+          })
 
           callback()
         } catch (error) {

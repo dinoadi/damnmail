@@ -4,6 +4,7 @@ import { DEFAULT_EMAIL_TTL_HOURS, normalizeDomain } from '@damnmail/shared'
 const envSchema = z.object({
   DOMAINS: z.string().min(1),
   EMAIL_TTL_HOURS: z.coerce.number().int().positive().default(DEFAULT_EMAIL_TTL_HOURS),
+  CATCH_ALL_ADDRESS: z.string().optional(),
   API_PORT: z.coerce.number().int().positive().default(3001),
   SMTP_PORT: z.coerce.number().int().positive().default(2525),
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
