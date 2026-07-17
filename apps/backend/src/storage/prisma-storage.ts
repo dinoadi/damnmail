@@ -85,7 +85,7 @@ export class PrismaStorageAdapter implements StorageAdapter {
   }
 
   async listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
-  const { limit = 50, offset = 0 } = options || {}
+  const { limit = 1000, offset = 0 } = options || {}
 
   const inbox = await this.prisma.inbox.findUnique({
     where: { address },
@@ -126,6 +126,39 @@ export class PrismaStorageAdapter implements StorageAdapter {
     return this.prisma.email.count({
       where: { inbox: { address } }
     })
+  }
+
+  async countAttachments(address: string): Promise<number> {
+    const inbox = await this.prisma.inbox.findUnique({
+      where: { address },
+      include: {
+        emails: {
+          include: { _count: { select: { attachments: true } } }
+        }
+      }
+    })
+    if (!inbox) return 0
+    return inbox.emails.reduce((sum, e) => sum + e._count.attachments, 0)
+  }
+
+  async getStorageUsedBytes(address: string): Promise<number> {
+    const inbox = await this.prisma.inbox.findUnique({
+      where: { address },
+      include: {
+        emails: {
+          include: { attachments: true }
+        }
+      }
+    })
+    if (!inbox) return 0
+    let bytes = 0
+    for (const email of inbox.emails) {
+      bytes += (email.text?.length ?? 0) + (email.html?.length ?? 0)
+      for (const att of email.attachments) {
+        bytes += att.size
+      }
+    }
+    return bytes
   }
 
 async getMessage(messageId: string): Promise<EmailMessage | undefined> {

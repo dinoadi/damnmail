@@ -18,6 +18,7 @@ interface BuildSmtpServerOptions {
 export function buildSmtpServer(options: BuildSmtpServerOptions): SMTPServer {
   return new SMTPServer({
     disabledCommands: ['AUTH', 'STARTTLS'],
+    name: 'mail.readyonbooking.app',
     banner: 'DamnMail SMTP ready',
     onRcptTo(address, _session, callback) {
       const domain = normalizeDomain(address.address.split('@')[1] ?? '')

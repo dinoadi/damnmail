@@ -76,18 +76,31 @@ export async function buildApiServer(options: BuildApiServerOptions) {
 
   app.get('/api/inboxes/:address/stats', async (request) => {
     const address = (request.params as { address: string }).address
-    const totalEmails = await options.inboxService.countMessages(address)
+    const [totalEmails, totalAttachments, storageUsedBytes] = await Promise.all([
+      options.inboxService.countMessages(address),
+      options.inboxService.countAttachments(address),
+      options.inboxService.getStorageUsedBytes(address)
+    ])
     const storageLimit = 2 * 1024 * 1024 * 1024
+    const usagePercent = storageLimit > 0 ? Math.round((storageUsedBytes / storageLimit) * 100) : 0
+
+    function formatBytes(bytes: number): string {
+      if (bytes === 0) return '0 B'
+      const units = ['B', 'KB', 'MB', 'GB', 'TB']
+      const i = Math.floor(Math.log(bytes) / Math.log(1024))
+      const val = bytes / Math.pow(1024, i)
+      return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i]
+    }
 
     return {
       inboxAddress: address,
       totalEmails,
-      totalAttachments: 0,
-      storageUsedBytes: 0,
+      totalAttachments,
+      storageUsedBytes,
       storageLimit,
-      storageUsedFormatted: '0 B',
-      storageLimitFormatted: '2 GB',
-      usagePercent: 0
+      storageUsedFormatted: formatBytes(storageUsedBytes),
+      storageLimitFormatted: formatBytes(storageLimit),
+      usagePercent
     }
   })
 

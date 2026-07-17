@@ -13,6 +13,8 @@ export interface StorageAdapter {
   getInbox(address: string): Promise<InboxAddress | undefined>
   listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]>
   countMessages(address: string): Promise<number>
+  countAttachments(address: string): Promise<number>
+  getStorageUsedBytes(address: string): Promise<number>
   addMessage(
     address: string,
     message: Omit<EmailMessage, 'id' | 'snippet'>,

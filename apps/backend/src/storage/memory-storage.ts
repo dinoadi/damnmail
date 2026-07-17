@@ -77,13 +77,21 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 
   async listMessages(address: string, options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
-  const { limit = 50, offset = 0 } = options || {}
+  const { limit = 1000, offset = 0 } = options || {}
   const all = this.messages.get(address) ?? []
   const selected = limit > 0 ? all.slice(offset, offset + limit) : all
 }
 
   async countMessages(address: string): Promise<number> {
     return this.messages.get(address)?.length ?? 0
+  }
+
+  async countAttachments(address: string): Promise<number> {
+    return 0
+  }
+
+  async getStorageUsedBytes(address: string): Promise<number> {
+    return 0
   }
   async addMessage(
     address: string,
