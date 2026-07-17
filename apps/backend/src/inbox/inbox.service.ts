@@ -35,6 +35,10 @@ export class InboxService {
   return this.storage.listMessages(address, options)
 }
 
+  async countMessages(address: string): Promise<number> {
+    return this.storage.countMessages(address)
+  }
+
 async getMessage(messageId: string): Promise<EmailMessage | undefined> {
   return this.storage.getMessage(messageId)
 }

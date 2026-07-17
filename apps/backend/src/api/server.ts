@@ -76,21 +76,18 @@ export async function buildApiServer(options: BuildApiServerOptions) {
 
   app.get('/api/inboxes/:address/stats', async (request) => {
     const address = (request.params as { address: string }).address
-    const messages = await options.inboxService.listMessages(address, { limit: 0 })
-    const totalEmails = messages.length
-    const totalAttachments = messages.reduce((sum, m) => sum + (m.attachments?.length || 0), 0)
-    const storageUsedBytes = messages.reduce((sum, m) => sum + (m.attachments?.reduce((s, a) => s + a.size, 0) || 0), 0)
+    const totalEmails = await options.inboxService.countMessages(address)
     const storageLimit = 2 * 1024 * 1024 * 1024
 
     return {
       inboxAddress: address,
       totalEmails,
-      totalAttachments,
-      storageUsedBytes,
+      totalAttachments: 0,
+      storageUsedBytes: 0,
       storageLimit,
-      storageUsedFormatted: formatBytes(storageUsedBytes),
+      storageUsedFormatted: '0 B',
       storageLimitFormatted: '2 GB',
-      usagePercent: Math.min((storageUsedBytes / storageLimit) * 100, 100),
+      usagePercent: 0
     }
   })
 

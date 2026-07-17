@@ -122,6 +122,12 @@ export class PrismaStorageAdapter implements StorageAdapter {
   }))
 }
 
+  async countMessages(address: string): Promise<number> {
+    return this.prisma.email.count({
+      where: { inbox: { address } }
+    })
+  }
+
 async getMessage(messageId: string): Promise<EmailMessage | undefined> {
   const email = await this.prisma.email.findUnique({
     where: { id: messageId },

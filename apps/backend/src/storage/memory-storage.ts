@@ -82,6 +82,9 @@ export class MemoryStorageAdapter implements StorageAdapter {
   const selected = limit > 0 ? all.slice(offset, offset + limit) : all
 }
 
+  async countMessages(address: string): Promise<number> {
+    return this.messages.get(address)?.length ?? 0
+  }
   async addMessage(
     address: string,
     message: Omit<EmailMessage, 'id' | 'snippet'>,
