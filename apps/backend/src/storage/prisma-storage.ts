@@ -91,8 +91,7 @@ export class PrismaStorageAdapter implements StorageAdapter {
     where: { address },
     include: {
       emails: {
-skip: offset,
-take: limit } : {}),
+        ...(options ? { skip: offset, take: limit } : {}),
         include: { attachments: true },
         orderBy: { receivedAt: 'desc' }
       }
