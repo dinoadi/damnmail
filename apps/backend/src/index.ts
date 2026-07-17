@@ -53,7 +53,7 @@ async function startApplication(): Promise<void> {
   }, 60_000)
 
   telegramBotService.start()
-  await apiServer.listen({ host: '0.0.0.0', port: env.API_PORT })
+  await apiServer.listen({ host: '127.0.0.1', port: env.API_PORT })
   smtpServer.listen(env.SMTP_PORT, '0.0.0.0')
 }
 
