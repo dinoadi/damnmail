@@ -29,8 +29,7 @@ export class TelegramBotService {
 
     this.bot = new Bot(options.token)
     this.registerCommands()
-    // this.registerRealtimeForwarding() // Nonaktifkan — notif sudah ditangani process-email function
-  }
+    this.registerRealtimeForwarding()
 
   start(): void {
     if (!this.bot) {
